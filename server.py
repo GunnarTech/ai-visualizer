@@ -101,7 +101,7 @@ DEFAULTS = {
 def load_config():
     cfg = dict(DEFAULTS)
     try:
-        user = json.loads((HERE / "ai-visualizer.json").read_text())
+        user = json.loads((HERE / "ai-visualizer.json").read_text(encoding="utf-8"))
         for k, v in user.items():
             cfg[k] = v
     except FileNotFoundError:
@@ -136,7 +136,7 @@ def list_faces():
             if p.is_dir() and (p / "index.html").exists():
                 meta = {"id": p.name, "title": p.name.title(), "tagline": ""}
                 try:
-                    meta.update(json.loads((p / "face.json").read_text()))
+                    meta.update(json.loads((p / "face.json").read_text(encoding="utf-8")))
                 except (OSError, ValueError):
                     pass
                 meta["id"] = p.name
@@ -171,7 +171,7 @@ def read_bus():
     if MOCK:
         return mock_bus()
     try:
-        state = (BUS / ".voice_state").read_text().strip().lower()
+        state = (BUS / ".voice_state").read_text(encoding="utf-8").strip().lower()
         if state not in STATES:
             state = "idle"
     except OSError:
@@ -179,7 +179,7 @@ def read_bus():
     level = 0.0
     samples = [0.0] * 64
     try:
-        payload = json.loads((BUS / ".voice_waveform").read_text())
+        payload = json.loads((BUS / ".voice_waveform").read_text(encoding="utf-8"))
         age = time.time() - float(payload.get("ts", 0))
         raw = payload.get("samples") or []
         if raw and age < WAVEFORM_STALE_S:
@@ -200,12 +200,12 @@ def read_bus():
     # until asked for. An empty dict simply means no readout.
     rate_limits = {}
     try:
-        rate_limits = json.loads((BUS / ".voice_rate_limits").read_text())
+        rate_limits = json.loads((BUS / ".voice_rate_limits").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
     note = {}
     try:
-        note = json.loads((BUS / ".agent_note").read_text())
+        note = json.loads((BUS / ".agent_note").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
     # A PreToolUse hook (.claude/hooks/activity_log.py) appends here on
@@ -213,7 +213,7 @@ def read_bus():
     # instead of going idle-looking during a long silent stretch of work.
     activity = []
     try:
-        activity = json.loads((BUS / ".agent_activity").read_text())
+        activity = json.loads((BUS / ".agent_activity").read_text(encoding="utf-8"))
         if not isinstance(activity, list):
             activity = []
     except (OSError, ValueError):
