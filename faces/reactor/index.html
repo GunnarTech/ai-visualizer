@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<!--
+ai-visualizer: give your AI agent a face.
+Copyright (C) 2026 Jared Rhodenizer
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Arc Reactor</title>
+<style>
+  @font-face{font-family:"Orbitron";src:url("../../assets/Orbitron-Variable.ttf")}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;background:#01050a;overflow:hidden}
+  canvas#stage{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+  #noteText{position:fixed;z-index:40;white-space:pre-wrap;word-wrap:break-word;
+    overflow-y:auto;overflow-x:hidden;margin:0;user-select:text;cursor:text;
+    opacity:0;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<pre id="noteText"></pre>
+<script src="../../core.js"></script>
+<script>
+"use strict";
+/* ============================================================
+   ARC REACTOR  ·  the Stark-HUD face
+   A glowing reactor core at the center of a rotating armored ring,
+   waveform spokes discharging off it on the voice, a faint HUD grid
+   turning behind everything. Idle it just breathes; listening takes
+   over the ENTIRE screen instead of a corner widget.
+
+   idle       slow breathing core, slow ring rotation, faint grid
+   listening  the whole screen becomes the mic meter: a full-width
+              waveform band and a wash of light, not a corner ribbon
+   thinking   rings spin up, amber status word descrambles in
+   speaking   core pulses on the live envelope, radial spokes
+              discharge on the waveform ring
+   alert      everything shifts red, pulsing frame
+
+   Font is Orbitron (OFL, self-hosted in assets/) for the HUD
+   lettering. Keys: F = fullscreen.
+   ============================================================ */
+
+const Q=new URLSearchParams(location.search);
+const SHOT=Q.get("shot");
+AV.init({mic:true});
+AV.ready(a=>{document.title=a.name+" Arc Reactor";});
+
+const CYAN=[90,225,255], WHITE=[225,248,255], AMBER=[255,180,70], RED=[255,60,50];
+const STEEL=[150,180,200];
+const UI_FONT="'Orbitron',sans-serif";
+const THINKING_WORDS=["PROCESSING","THINKING","QUERYING MEMORY","COMPILING RESPONSE","RUNNING IT DOWN"];
+const D=AV.util.Descrambler;
+
+const cv=document.getElementById("stage"), ctx=cv.getContext("2d");
+let W=0,H=0,cx=0,cy=0;
+
+/* ---------------- HUD grid backdrop ---------------- */
+function drawGrid(t){
+  ctx.strokeStyle="rgba(70,150,190,.10)";
+  ctx.lineWidth=1;
+  for(let r=60;r<Math.max(W,H);r+=70){
+    ctx.beginPath();ctx.arc(cx,cy,r,0,6.2832);ctx.stroke();
+  }
+  ctx.save();
+  ctx.translate(cx,cy);ctx.rotate(t*0.00002);
+  for(let i=0;i<24;i++){
+    const a=i/24*6.2832;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*60,Math.sin(a)*60);
+    ctx.lineTo(Math.cos(a)*Math.max(W,H),Math.sin(a)*Math.max(W,H));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ---------------- reactor core ---------------- */
+let ring1=0,ring2=0,corePulse=0,breathPhase=0;
+function drawReactor(dt,state,env,alert){
+  const spinK=state==="thinking"?3.2:state==="speaking"?1.3:0.4;
+  ring1+=spinK*dt/1000;
+  ring2-=spinK*0.6*dt/1000;
+  breathPhase+=dt/1000;
+  const R=Math.min(W,H)*.16;
+  // housing (rings, teeth, rivets) stays fixed steel — only the energy
+  // (glow, core, spokes) carries the state color, so the two never fight
+  const col=alert?RED:AMBER;
+  const hot=AV.util.mix(col,WHITE,.55);
+  const breathe=.5+.5*Math.sin(breathPhase*1.1);
+  const target=state==="speaking"?(.55+.75*env):breathe*.7;
+  corePulse+=(target-corePulse)*Math.min(1,dt/220);
+
+  // outer housing: toothed ring boxed by two crisp rim lines, plus rivets
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(ring1);
+  for(let i=0;i<16;i++){
+    const a0=i/16*6.2832+.02, a1=(i+1)/16*6.2832-.02;
+    ctx.strokeStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},${.35+.35*corePulse})`;
+    ctx.lineWidth=R*.14;
+    ctx.beginPath();ctx.arc(0,0,R*1.55,a0,a1);ctx.stroke();
+  }
+  ctx.strokeStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.55)`;
+  ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.arc(0,0,R*1.55+R*.08,0,6.2832);ctx.stroke();
+  ctx.beginPath();ctx.arc(0,0,R*1.55-R*.08,0,6.2832);ctx.stroke();
+  ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.75)`;
+  for(let i=0;i<8;i++){
+    const a=i/8*6.2832;
+    ctx.beginPath();ctx.arc(Math.cos(a)*R*1.78,Math.sin(a)*R*1.78,Math.max(1.5,R*.025),0,6.2832);ctx.fill();
+  }
+  ctx.restore();
+
+  // turbine ring (fine teeth) + a slower gear ring (chunky teeth) inside it
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(ring2);
+  ctx.strokeStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.55)`;
+  ctx.lineWidth=2;
+  for(let i=0;i<40;i++){
+    const a=i/40*6.2832;
+    const r1=R*1.18,r2=R*1.30;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*r1,Math.sin(a)*r1);
+    ctx.lineTo(Math.cos(a)*r2,Math.sin(a)*r2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(-ring2*.5);
+  const nTeeth=20;
+  for(let i=0;i<nTeeth;i++){
+    const a=i/nTeeth*6.2832, w=6.2832/nTeeth*.32;
+    const rOut=i%2===0?R*.97:R*.88, rIn=R*.78;
+    ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},${.5+.35*corePulse})`;
+    ctx.beginPath();
+    ctx.arc(0,0,rOut,a-w,a+w);
+    ctx.arc(0,0,rIn,a+w,a-w,true);
+    ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+
+  const glowR=R*(1+corePulse*.5);
+  const grd=ctx.createRadialGradient(cx,cy,0,cx,cy,glowR*2.2);
+  grd.addColorStop(0,`rgba(${hot[0]},${hot[1]},${hot[2]},${.9*corePulse+.15})`);
+  grd.addColorStop(.35,`rgba(${col[0]},${col[1]},${col[2]},${.55*corePulse+.1})`);
+  grd.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=grd;
+  ctx.beginPath();ctx.arc(cx,cy,glowR*2.2,0,6.2832);ctx.fill();
+
+  ctx.save();ctx.translate(cx,cy);
+  ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},${.6*corePulse+.25})`;
+  ctx.lineWidth=Math.max(1,R*.025);
+  ctx.beginPath();ctx.arc(0,0,R*.62,0,6.2832);ctx.stroke();
+  ctx.strokeStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},${.65*corePulse+.15})`;
+  ctx.lineWidth=Math.max(1,R*.03);
+  const nTick=32;
+  for(let i=0;i<nTick;i++){
+    const a=i/nTick*6.2832;
+    const r1=R*.46,r2=R*.54;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*r1,Math.sin(a)*r1);
+    ctx.lineTo(Math.cos(a)*r2,Math.sin(a)*r2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // glossy specular sheen, off-center like light hitting curved glass
+  const hlGrd=ctx.createRadialGradient(cx-R*.18,cy-R*.18,0,cx-R*.18,cy-R*.18,R*.55);
+  hlGrd.addColorStop(0,`rgba(${hot[0]},${hot[1]},${hot[2]},${.4*corePulse+.05})`);
+  hlGrd.addColorStop(1,`rgba(${hot[0]},${hot[1]},${hot[2]},0)`);
+  ctx.fillStyle=hlGrd;
+  ctx.beginPath();ctx.arc(cx,cy,R*.62,0,6.2832);ctx.fill();
+
+  ctx.fillStyle=`rgba(${hot[0]},${hot[1]},${hot[2]},.95)`;
+  ctx.beginPath();ctx.arc(cx,cy,R*.22*(0.7+.3*corePulse),0,6.2832);ctx.fill();
+
+  return R;
+}
+
+/* ---------------- equalizer spokes (waveform-driven) ---------------- */
+function drawSpokes(R,samples,env,alert,state){
+  if(state!=="speaking")return;
+  const col=alert?RED:AMBER;
+  const n=samples.length;
+  for(let i=0;i<n;i++){
+    const a=i/n*6.2832;
+    const len=R*.5*samples[i]*(.4+env);
+    if(len<2)continue;
+    const r1=R*1.62;
+    const x1=cx+Math.cos(a)*r1, y1=cy+Math.sin(a)*r1;
+    const x2=cx+Math.cos(a)*(r1+len), y2=cy+Math.sin(a)*(r1+len);
+    ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},${.25+.55*samples[i]})`;
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  }
+}
+
+/* ---------------- listening: takes the whole screen ---------------- */
+let listenHist=[];
+function drawListening(){
+  listenHist.push(AV.micLevel);
+  const span=Math.max(80,W/4|0);
+  if(listenHist.length>span)listenHist=listenHist.slice(-span);
+  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.05)`;
+  ctx.fillRect(0,0,W,H);
+  const midY=H*.55, amp=H*.22, step=W/span;
+  for(let i=0;i<listenHist.length;i++){
+    const bh=Math.max(2,listenHist[i]*amp);
+    const x=i*step;
+    ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.75)`;
+    ctx.fillRect(x,midY-bh,Math.max(2,step-1),bh*2);
+  }
+  ctx.save();
+  ctx.globalCompositeOperation="lighter";
+  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.12)`;
+  ctx.fillRect(0,midY-amp*1.3,W,amp*2.6);
+  ctx.restore();
+  ctx.font=`${Math.round(Math.min(W,H)*.09)}px ${UI_FONT}`;
+  ctx.textAlign="center";ctx.textBaseline="middle";
+  ctx.fillStyle=`rgba(${WHITE[0]},${WHITE[1]},${WHITE[2]},.9)`;
+  ctx.fillText("LISTENING",W/2,H*.20);
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+}
+
+/* ---------------- lettering + chrome ---------------- */
+let thinkLabel=null, stateTag=null, tagState="";
+function drawTitle(){
+  ctx.textAlign="center";ctx.textBaseline="top";
+  ctx.font=`${Math.round(Math.min(W,H)*.038)}px ${UI_FONT}`;
+  ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.85)`;
+  ctx.fillText(Array.from(AV.name).join(" "),cx,20);
+  ctx.font=`${Math.round(Math.min(W,H)*.018)}px ${UI_FONT}`;
+  ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.5)`;
+  ctx.fillText(AV.label,cx,20+Math.round(Math.min(W,H)*.05));
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+}
+function drawThinking(dt,thinkAmt){
+  if(!thinkLabel||thinkLabel.done)
+    thinkLabel=new D(THINKING_WORDS[Math.random()*THINKING_WORDS.length|0],70,1400);
+  const txt=thinkLabel.render(dt);
+  const fs=Math.round(Math.min(W,H)*.045);
+  ctx.font=`${fs}px ${UI_FONT}`;
+  ctx.textAlign="center";ctx.textBaseline="top";
+  ctx.globalAlpha=Math.min(1,thinkAmt);
+  ctx.fillStyle=`rgb(${AMBER[0]},${AMBER[1]},${AMBER[2]})`;
+  ctx.fillText(txt,W/2,H*.14);
+  if(AV.state==="thinking"&&AV.stateElapsed>10000){
+    const secs=Math.floor(AV.stateElapsed/1000);
+    ctx.font=`${Math.round(fs*.5)}px ${UI_FONT}`;
+    ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.7)`;
+    ctx.fillText(`${secs}s`,W/2,H*.14+fs*1.25);
+  }
+  ctx.globalAlpha=1;ctx.textAlign="left";
+}
+function drawStateTag(dt,state,alert){
+  const label=alert?"ALERT":state.toUpperCase();
+  if(label!==tagState){tagState=label;stateTag=new D(`${AV.name} // ${label}`,40);}
+  const fs=Math.round(Math.min(W,H)*.026);
+  ctx.font=`${fs}px ${UI_FONT}`;ctx.textBaseline="alphabetic";
+  ctx.fillStyle=alert?`rgb(${RED[0]},${RED[1]},${RED[2]})`:`rgb(${CYAN[0]*.6|0},${CYAN[1]*.6|0},${CYAN[2]*.6|0})`;
+  ctx.fillText(stateTag.render(dt),18,H-16);
+}
+function drawUsage(){
+  const rows=AV.util.usageRows();
+  if(!rows.length)return;
+  const fs=Math.round(Math.min(W,H)*.02);
+  ctx.save();
+  ctx.font=`${fs}px ${UI_FONT}`;
+  ctx.textAlign="right";ctx.textBaseline="alphabetic";
+  let y=H-16-(rows.length-1)*(fs+4);
+  for(const r of rows){
+    ctx.fillStyle=r.hot?`rgb(${RED[0]},${RED[1]},${RED[2]})`:`rgb(${CYAN[0]},${CYAN[1]},${CYAN[2]})`;
+    ctx.fillText(`${r.label} ${r.text}`,W-18,y);
+    y+=fs+4;
+  }
+  ctx.restore();
+}
+/* ---------------- note panel: whatever's driving the session can post text ----------------
+   The body text is a REAL DOM element laid over the canvas, not fillText —
+   canvas pixels can't be selected or copied, and a pasted PowerShell command
+   is exactly the case where that matters. Canvas still draws the frame and
+   title bar; this div only owns the body, sized to it every frame. */
+let notePresence=0;
+const noteTextEl=document.getElementById("noteText");
+function drawNotePanel(dt){
+  const has=!!(AV.note&&AV.note.text)&&AV.note.text!==dismissedText;
+  notePresence+=((has?1:0)-notePresence)*Math.min(1,dt/300);
+  if(notePresence<.01){
+    noteCloseBox=null;
+    noteTextEl.style.opacity=0;
+    noteTextEl.style.pointerEvents="none";
+    return;
+  }
+
+  const pad=Math.round(Math.min(W,H)*.018);
+  const panelW=Math.min(W*.36,560);
+  const titleFs=Math.round(Math.min(W,H)*.022);
+  const bodyFs=Math.round(Math.min(W,H)*.0155);
+  // the poster picks the style per note: "term" for commands/paths/data,
+  // where a fixed-width face is what makes it legible; "doc" for prose,
+  // where a normal document face reads better. Sticks through fade-out.
+  const style=has?(AV.note.style==="doc"?"doc":"term"):lastNoteStyle;
+  if(has)lastNoteStyle=style;
+  const fontFamily=style==="doc"?"'Calibri','Segoe UI',sans-serif":"'SF Mono',Menlo,Consolas,monospace";
+  const bodyPx=style==="doc"?Math.round(bodyFs*1.1):bodyFs;
+  const text=has?AV.note.text:(lastNoteText||"");
+  if(has)lastNoteText=AV.note.text;
+  const titleH=Math.round(titleFs*2);
+
+  // lay the real text out first so its natural (possibly scrollable) height
+  // drives the frame size, instead of a hand-rolled line-wrap/line-count.
+  // textContent is reassigned ONLY on change: doing it every frame destroys
+  // and recreates the text node, which silently kills any in-progress mouse
+  // selection before a drag can ever complete.
+  if(noteTextEl._lastText!==text){
+    noteTextEl.textContent=text;
+    noteTextEl._lastText=text;
+  }
+  noteTextEl.style.font=`${bodyPx}px ${fontFamily}`;
+  noteTextEl.style.lineHeight="1.4";
+  noteTextEl.style.width=`${panelW-pad*2}px`;
+  noteTextEl.style.height="auto";
+  noteTextEl.style.maxHeight="none";
+  const naturalH=noteTextEl.scrollHeight;
+  const bodyH=Math.min(naturalH,H*.72-titleH-pad);
+  const panelH=titleH+bodyH+pad*1.3;
+
+  const x0=Math.round(Math.min(W,H)*.03);
+  const y0=Math.round(Math.max(pad,Math.min(H*.5-panelH/2,H-pad-panelH)));
+  const slideIn=(1-notePresence)*-(panelW*.15);
+
+  ctx.save();
+  ctx.globalAlpha=notePresence;
+  ctx.translate(slideIn,0);
+
+  const cut=12;
+  ctx.beginPath();
+  ctx.moveTo(x0+cut,y0);ctx.lineTo(x0+panelW-cut,y0);
+  ctx.lineTo(x0+panelW,y0+cut);ctx.lineTo(x0+panelW,y0+panelH-cut);
+  ctx.lineTo(x0+panelW-cut,y0+panelH);ctx.lineTo(x0+cut,y0+panelH);
+  ctx.lineTo(x0,y0+panelH-cut);ctx.lineTo(x0,y0+cut);ctx.closePath();
+  ctx.fillStyle="rgba(4,10,16,.86)";ctx.fill();
+  ctx.strokeStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.75)`;
+  ctx.lineWidth=1.5;ctx.stroke();
+
+  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.16)`;
+  ctx.fillRect(x0,y0,panelW,titleH);
+  ctx.strokeStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.6)`;
+  ctx.beginPath();ctx.moveTo(x0,y0+titleH);ctx.lineTo(x0+panelW,y0+titleH);ctx.stroke();
+
+  ctx.textAlign="left";ctx.textBaseline="middle";
+  ctx.font=`${titleFs}px ${UI_FONT}`;
+  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.95)`;
+  ctx.fillText(((has?AV.note.title:lastNoteTitle)||"NOTE").toUpperCase(),x0+pad,y0+titleH/2);
+  if(has)lastNoteTitle=AV.note.title;
+
+  const closeW=titleH*.9;
+  ctx.textAlign="center";
+  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.9)`;
+  ctx.fillText("×",x0+panelW-closeW/2,y0+titleH/2);
+  noteCloseBox={x:x0+panelW-closeW+slideIn,y:y0,w:closeW,h:titleH};
+
+  ctx.textBaseline="alphabetic";ctx.textAlign="left";
+  ctx.restore();
+
+  noteTextEl.style.left=`${x0+pad+slideIn}px`;
+  noteTextEl.style.top=`${y0+titleH+pad*.65}px`;
+  noteTextEl.style.height=`${bodyH}px`;
+  noteTextEl.style.maxHeight=`${bodyH}px`;
+  noteTextEl.style.color=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.95)`;
+  noteTextEl.style.opacity=notePresence;
+  noteTextEl.style.pointerEvents=has?"auto":"none";
+}
+let lastNoteText="",lastNoteTitle="",lastNoteStyle="term",dismissedText=null,noteCloseBox=null;
+
+function drawAlertFrame(t){
+  const pulse=.45+.55*Math.abs(Math.sin(t/250));
+  ctx.fillStyle=`rgba(${RED[0]},${RED[1]},${RED[2]},${.6*pulse})`;
+  ctx.fillRect(0,0,W,8);ctx.fillRect(0,H-8,W,8);
+  ctx.fillRect(0,0,8,H);ctx.fillRect(W-8,0,8,H);
+}
+
+/* ---------------- activity terminal: live "what is Jarvis doing" feed ----------------
+   AV.activity is kept by a PreToolUse hook (.claude/hooks/activity_log.py)
+   that fires on every tool call, so this reads as an actual scrolling
+   terminal — not a vibe — the whole time a turn is silently working. */
+const TERM_GREEN=[130,230,150];
+let termPresence=0,termFullscreen=false,termScroll=0;
+let termBounds=null,termExpandBox=null;
+function drawTerminal(dt){
+  // once there's ANYTHING to show, the panel stays up — no auto-hide, so
+  // scrollback is always there to check rather than a widget that vanishes
+  // the moment the state changes
+  const has=AV.activity.length>0;
+  termPresence+=((has?1:0)-termPresence)*Math.min(1,dt/300);
+  if(termPresence<.01){termBounds=null;termExpandBox=null;return;}
+
+  const pad=Math.round(Math.min(W,H)*.014);
+  const lineFs=termFullscreen
+    ? Math.max(13,Math.round(Math.min(W,H)*.02))
+    : Math.max(11,Math.round(Math.min(W,H)*.0145));
+  const titleH=Math.round(lineFs*2.2);
+  const lineH=lineFs*1.5;
+  let panelW,panelH,rows,x0,y0;
+  if(termFullscreen){
+    panelW=W-pad*2;
+    panelH=H-pad*2;
+    rows=Math.max(3,Math.floor((panelH-titleH-pad)/lineH));
+    x0=pad;y0=pad;
+  }else{
+    panelW=Math.min(W*.34,520);
+    rows=Math.min(8,Math.max(3,Math.floor((H*.5)/lineH)));
+    panelH=titleH+rows*lineH+pad;
+    x0=Math.round(W-Math.min(W,H)*.03-panelW);
+    y0=Math.round(Math.max(pad,Math.min(H*.5-panelH/2,H-pad-panelH)));
+  }
+  const slideIn=termFullscreen?0:(1-termPresence)*(panelW*.15);
+
+  const total=AV.activity.length;
+  const maxScroll=Math.max(0,total-rows);
+  termScroll=Math.max(0,Math.min(termScroll,maxScroll));
+  const start=Math.max(0,total-rows-termScroll);
+  const entries=AV.activity.slice(start,start+rows);
+
+  ctx.save();
+  ctx.globalAlpha=termPresence;
+  ctx.translate(slideIn,0);
+
+  const cut=12;
+  ctx.beginPath();
+  ctx.moveTo(x0+cut,y0);ctx.lineTo(x0+panelW-cut,y0);
+  ctx.lineTo(x0+panelW,y0+cut);ctx.lineTo(x0+panelW,y0+panelH-cut);
+  ctx.lineTo(x0+panelW-cut,y0+panelH);ctx.lineTo(x0+cut,y0+panelH);
+  ctx.lineTo(x0,y0+panelH-cut);ctx.lineTo(x0,y0+cut);ctx.closePath();
+  ctx.fillStyle="rgba(3,8,6,.92)";ctx.fill();
+  ctx.strokeStyle=`rgba(${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.5)`;
+  ctx.lineWidth=1.5;ctx.stroke();
+
+  ctx.fillStyle=`rgba(${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.14)`;
+  ctx.fillRect(x0,y0,panelW,titleH);
+  ctx.beginPath();ctx.moveTo(x0,y0+titleH);ctx.lineTo(x0+panelW,y0+titleH);ctx.stroke();
+
+  ctx.textAlign="left";ctx.textBaseline="middle";
+  ctx.font=`${Math.round(lineFs*1.15)}px ${UI_FONT}`;
+  ctx.fillStyle=`rgba(${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.9)`;
+  ctx.fillText(termScroll>0?`ACTIVITY (${total-start-rows>0?total-start-rows:0} newer)`:"ACTIVITY",x0+pad,y0+titleH/2);
+
+  const label=termFullscreen?"COLLAPSE":"FULLSCREEN";
+  ctx.font=`${Math.round(lineFs*.85)}px ${UI_FONT}`;
+  const tw=ctx.measureText(label).width;
+  ctx.textAlign="right";
+  ctx.fillText(label,x0+panelW-pad,y0+titleH/2);
+  ctx.textAlign="left";
+  termExpandBox={x:x0+panelW-pad-tw-8+slideIn,y:y0,w:tw+16,h:titleH};
+
+  ctx.font=`${lineFs}px 'SF Mono',Menlo,Consolas,monospace`;
+  const maxChars=Math.floor((panelW-pad*2)/(lineFs*.62));
+  let ly=y0+titleH+pad*.6;
+  for(const e of entries){
+    const t=new Date((e.ts||0)*1000);
+    const hh=String(t.getHours()).padStart(2,"0"),
+          mm=String(t.getMinutes()).padStart(2,"0"),
+          ss=String(t.getSeconds()).padStart(2,"0");
+    let line=`${hh}:${mm}:${ss} ${e.tool||"?"} ${e.detail||""}`;
+    if(line.length>maxChars)line=line.slice(0,maxChars-1)+"…";
+    ctx.fillStyle=`rgba(${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.85)`;
+    ctx.fillText(line,x0+pad,ly+lineFs*.75);
+    ly+=lineH;
+  }
+  ctx.textBaseline="alphabetic";ctx.textAlign="left";
+  ctx.restore();
+  termBounds={x:x0+slideIn,y:y0,w:panelW,h:panelH};
+}
+
+/* ---------------- frame ---------------- */
+let now=0,thinkingAmt=0;
+function frame(dt){
+  AV.tick(dt);
+  now+=dt;
+  const state=AV.state, alert=AV.alert;
+  const tgt=state==="thinking"?1:0;
+  thinkingAmt+=(tgt-thinkingAmt)*Math.min(1,dt/400);
+
+  ctx.fillStyle="#01050a";ctx.fillRect(0,0,W,H);
+  drawGrid(now);
+  const R=drawReactor(dt,state,AV.env,alert);
+  drawSpokes(R,AV.samples,AV.env,alert,state);
+  drawTitle();
+  if(state==="listening")drawListening();else listenHist.length=0;
+  if(thinkingAmt>.2)drawThinking(dt,thinkingAmt);else thinkLabel=null;
+  drawStateTag(dt,state,alert);
+  drawUsage();
+  drawNotePanel(dt);
+  drawTerminal(dt);
+  if(alert)drawAlertFrame(now);
+}
+
+function resize(){
+  W=cv.width=innerWidth;H=cv.height=innerHeight;cx=W/2;cy=H/2;
+}
+addEventListener("resize",resize);
+resize();
+
+addEventListener("keydown",e=>{
+  if(e.key==="f"||e.key==="F"){
+    document.fullscreenElement?document.exitFullscreen()
+      :document.documentElement.requestFullscreen();
+  }
+  if(e.key==="Escape"&&termFullscreen)termFullscreen=false;
+});
+
+// swaps to a pointer cursor over any clickable HUD control so it reads as such
+function inBox(b,x,y){
+  return b&&x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h;
+}
+addEventListener("mousemove",e=>{
+  const hit=inBox(noteCloseBox,e.clientX,e.clientY)||inBox(termExpandBox,e.clientX,e.clientY);
+  cv.style.cursor=hit?"pointer":"default";
+});
+addEventListener("click",e=>{
+  if(inBox(noteCloseBox,e.clientX,e.clientY))dismissedText=lastNoteText;
+  if(inBox(termExpandBox,e.clientX,e.clientY))termFullscreen=!termFullscreen;
+});
+addEventListener("wheel",e=>{
+  if(!inBox(termBounds,e.clientX,e.clientY))return;
+  e.preventDefault();
+  termScroll-=Math.sign(e.deltaY)*2;
+},{passive:false});
+
+if(SHOT){
+  AV.shotRun(frame);
+}else{
+  let last=performance.now();
+  (function loop(ts){
+    const dt=Math.min(100,ts-last);last=ts;
+    frame(dt);
+    requestAnimationFrame(loop);
+  })(performance.now());
+}
+</script>
+</body>
+</html>
