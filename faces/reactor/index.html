@@ -292,6 +292,28 @@ function drawUsage(){
    canvas pixels can't be selected or copied, and a pasted PowerShell command
    is exactly the case where that matters. Canvas still draws the frame and
    title bar; this div only owns the body, sized to it every frame. */
+/* ---------------- shared HUD rail ----------------
+   Both side panels occupy the SAME rectangle, mirrored: same width, same
+   top, same bottom. That is what makes the HUD read as one instrument
+   instead of two widgets that happened to land near each other. The rail
+   stops above the caption bar, so a panel can never draw over the
+   subtitles. Only ONE panel may be fullscreen at a time and the others
+   stand down completely while it is, which is what stops the panel
+   underneath bleeding through the one on top. */
+let fsPanel=null;                 // null | "note" | "term" | "subs"
+let RAIL={w:0,top:0,bottom:0,h:0,left:0,right:0};
+let subsCache=null;               // this frame's caption geometry
+function computeRail(){
+  const m=Math.min(W,H);
+  const w=Math.min(W*.27,480);
+  const top=Math.round(m*.17);
+  const capH=subsCache?subsCache.boxH:0;
+  const floor=capH?(H-m*.085-capH):(H-m*.075);
+  const bottom=Math.round(floor-m*.02);
+  RAIL={w,top,bottom,h:Math.max(Math.round(m*.2),bottom-top),
+        left:Math.round(m*.03),right:Math.round(W-m*.03-w)};
+}
+
 let notePresence=0;
 const noteTextEl=document.getElementById("noteText");
 function drawNotePanel(dt){
@@ -304,10 +326,16 @@ function drawNotePanel(dt){
     return;
   }
 
+  if(fsPanel&&fsPanel!=="note"){
+    noteCloseBox=null;noteExpandBox=null;noteBounds=null;
+    noteTextEl.style.opacity=0;noteTextEl.style.pointerEvents="none";
+    return;
+  }
+  const full=fsPanel==="note";
   const pad=Math.round(Math.min(W,H)*.018);
-  const panelW=Math.min(W*.27,480);
+  const panelW=full?W-pad*2:RAIL.w;
   const titleFs=Math.round(Math.min(W,H)*.024);
-  const bodyFs=Math.round(Math.min(W,H)*.017);
+  const bodyFs=Math.round(Math.min(W,H)*(full?.019:.017));
   // the poster picks the style per note: "term" for commands/paths/data,
   // where a fixed-width face is what makes it legible; "doc" for prose,
   // where a normal document face reads better. Sticks through fade-out.
@@ -330,16 +358,17 @@ function drawNotePanel(dt){
   }
   noteTextEl.style.font=`${bodyPx}px ${fontFamily}`;
   noteTextEl.style.lineHeight="1.4";
-  noteTextEl.style.width=`${panelW-pad*2}px`;
+  noteTextEl.style.width=`${(full?W-pad*2:RAIL.w)-pad*2}px`;
   noteTextEl.style.height="auto";
   noteTextEl.style.maxHeight="none";
-  const naturalH=noteTextEl.scrollHeight;
-  const bodyH=Math.max(Math.min(naturalH,H*.80-titleH-pad),Math.min(naturalH,H*.20));
-  const panelH=titleH+bodyH+pad*1.3;
-
-  const x0=Math.round(Math.min(W,H)*.03);
-  const y0=Math.round(Math.max(pad,Math.min(H*.5-panelH/2,H-pad-panelH)));
-  const slideIn=(1-notePresence)*-(panelW*.15);
+  // The frame is the rail, not the text. A short note leaves empty space
+  // rather than shrinking, so left and right stay the same size; a long one
+  // scrolls inside it. The DOM body already has overflow-y:auto.
+  const panelH=full?H-pad*2:RAIL.h;
+  const bodyH=panelH-titleH-pad*1.3;
+  const x0=full?pad:RAIL.left;
+  const y0=full?pad:RAIL.top;
+  const slideIn=full?0:(1-notePresence)*-(panelW*.15);
 
   ctx.save();
   ctx.globalAlpha=notePresence;
@@ -372,6 +401,15 @@ function drawNotePanel(dt){
   ctx.fillText("×",x0+panelW-closeW/2,y0+titleH/2);
   noteCloseBox={x:x0+panelW-closeW+slideIn,y:y0,w:closeW,h:titleH};
 
+  const exLabel=full?"COLLAPSE":"FULLSCREEN";
+  ctx.font=`${Math.round(titleFs*.62)}px ${UI_FONT}`;
+  ctx.textAlign="right";
+  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.7)`;
+  const exW=ctx.measureText(exLabel).width;
+  ctx.fillText(exLabel,x0+panelW-closeW-pad*.5,y0+titleH/2);
+  noteExpandBox={x:x0+panelW-closeW-pad*.5-exW-8+slideIn,y:y0,w:exW+16,h:titleH};
+  noteBounds={x:x0+slideIn,y:y0,w:panelW,h:panelH};
+
   ctx.textBaseline="alphabetic";ctx.textAlign="left";
   ctx.restore();
 
@@ -383,7 +421,8 @@ function drawNotePanel(dt){
   noteTextEl.style.opacity=notePresence;
   noteTextEl.style.pointerEvents=has?"auto":"none";
 }
-let lastNoteText="",lastNoteTitle="",lastNoteStyle="term",dismissedText=null,noteCloseBox=null;
+let lastNoteText="",lastNoteTitle="",lastNoteStyle="term",dismissedText=null,
+    noteCloseBox=null,noteExpandBox=null,noteBounds=null;
 
 function drawAlertFrame(t){
   const pulse=.45+.55*Math.abs(Math.sin(t/250));
@@ -397,7 +436,7 @@ function drawAlertFrame(t){
    that fires on every tool call, so this reads as an actual scrolling
    terminal — not a vibe — the whole time a turn is silently working. */
 const TERM_GREEN=[130,230,150];
-let termPresence=0,termFullscreen=false,termScroll=0;
+let termPresence=0,termScroll=0;
 let termBounds=null,termExpandBox=null;
 function drawTerminal(dt){
   // once there's ANYTHING to show, the panel stays up — no auto-hide, so
@@ -406,6 +445,8 @@ function drawTerminal(dt){
   const has=AV.activity.length>0;
   termPresence+=((has?1:0)-termPresence)*Math.min(1,dt/300);
   if(termPresence<.01){termBounds=null;termExpandBox=null;return;}
+  if(fsPanel&&fsPanel!=="term"){termBounds=null;termExpandBox=null;return;}
+  const termFullscreen=fsPanel==="term";
 
   const pad=Math.round(Math.min(W,H)*.014);
   const lineFs=termFullscreen
@@ -420,11 +461,12 @@ function drawTerminal(dt){
     rows=Math.max(3,Math.floor((panelH-titleH-pad)/lineH));
     x0=pad;y0=pad;
   }else{
-    panelW=Math.min(W*.27,480);
-    rows=Math.min(22,Math.max(3,Math.floor((H*.80)/lineH)));
-    panelH=titleH+rows*lineH+pad;
-    x0=Math.round(W-Math.min(W,H)*.03-panelW);
-    y0=Math.round(Math.max(pad,Math.min(H*.5-panelH/2,H-pad-panelH)));
+    // mirror of the note panel: identical width, top and bottom
+    panelW=RAIL.w;
+    panelH=RAIL.h;
+    rows=Math.max(3,Math.floor((panelH-titleH-pad)/lineH));
+    x0=RAIL.right;
+    y0=RAIL.top;
   }
   const slideIn=termFullscreen?0:(1-termPresence)*(panelW*.15);
 
@@ -487,57 +529,66 @@ function drawTerminal(dt){
 /* ---------------- frame ---------------- */
 let now=0,thinkingAmt=0;
 
-/* ---------------- subtitles: the spoken conversation, in case you
-   were not listening. Fed by .voice_transcript, which backtalk writes one
-   line at a time. Bottom centre, above the state tag, newest at the bottom
-   like real subtitles. ---------------- */
-let subsPresence=0;
-function drawSubtitles(dt){
-  const items=AV.transcript||[];
-  const has=items.length>0;
-  subsPresence+=((has?1:0)-subsPresence)*Math.min(1,dt/300);
-  if(subsPresence<.01)return;
+/* ---------------- subtitles: the spoken conversation, in case you were not
+   listening. Fed by .voice_transcript, which backtalk writes one line at a
+   time. Laid out BEFORE the side panels each frame so the rail knows how
+   much room to leave, which is what keeps a panel off the captions.
+   Scrolls on the wheel and expands to fullscreen like the others. */
+let subsPresence=0,subsScroll=0,subsBounds=null,subsExpandBox=null;
+const SUBS_FONT="'SF Mono',Menlo,Consolas,monospace";
 
-  const fs=Math.max(13,Math.round(Math.min(W,H)*.021));
+function subsLayout(){
+  const items=AV.transcript||[];
+  if(!items.length)return null;
+  const full=fsPanel==="subs";
+  const m=Math.min(W,H);
+  const fs=Math.max(13,Math.round(m*(full?.024:.021)));
   const lineH=Math.round(fs*1.45);
-  const maxW=Math.min(W*.62,1180);
-  const pad=Math.round(Math.min(W,H)*.016);
-  const MAXLINES=5;
+  const pad=Math.round(m*.016);
+  const boxW=full?W-pad*2:Math.min(W*.62,1180);
+  const titleH=full?Math.round(fs*2.2):0;
+  const maxLines=full?Math.max(3,Math.floor((H-pad*2-titleH-pad)/lineH)):5;
 
   ctx.save();
-  ctx.font=`${fs}px 'SF Mono',Menlo,Consolas,monospace`;
-  ctx.textBaseline="alphabetic";
-
-  // wrap newest-first so a long final line never pushes itself off screen
-  const drawn=[];
-  for(let i=items.length-1;i>=0&&drawn.length<MAXLINES;i--){
-    const it=items[i]||{};
+  ctx.font=`${fs}px ${SUBS_FONT}`;
+  const all=[];
+  for(const it of items){
     const mine=String(it.role||"").toLowerCase()==="you";
     const prefix=(mine?"YOU":String(it.role||AV.name).toUpperCase())+"  ";
-    const words=String(it.text||"").split(" ");
-    const wrapped=[];
     let line=prefix;
-    for(const w of words){
+    for(const w of String(it.text||"").split(" ")){
       const t=line?line+" "+w:w;
-      if(ctx.measureText(t).width>maxW-pad*2&&line!==prefix){wrapped.push(line);line="      "+w;}
+      if(ctx.measureText(t).width>boxW-pad*2&&line!==prefix){all.push({text:line,mine});line="      "+w;}
       else line=t;
     }
-    if(line.trim())wrapped.push(line);
-    for(let k=wrapped.length-1;k>=0&&drawn.length<MAXLINES;k--)
-      drawn.unshift({text:wrapped[k],mine});
+    if(line.trim())all.push({text:line,mine});
   }
-  if(!drawn.length){ctx.restore();return;}
+  ctx.restore();
+  if(!all.length)return null;
 
-  const boxH=drawn.length*lineH+pad*1.4;
-  const boxW=maxW;
-  const x0=Math.round(cx-boxW/2);
-  const y0=Math.round(H-Math.min(W,H)*.085-boxH);
-  const rise=(1-subsPresence)*(lineH*.6);
+  const maxScroll=Math.max(0,all.length-maxLines);
+  subsScroll=Math.max(0,Math.min(subsScroll,maxScroll));
+  const startIdx=Math.max(0,all.length-maxLines-subsScroll);
+  const lines=all.slice(startIdx,startIdx+maxLines);
+  const boxH=titleH+lines.length*lineH+pad*1.4;
+  const x0=full?pad:Math.round(cx-boxW/2);
+  const y0=full?pad:Math.round(H-m*.085-boxH);
+  return {lines,total:all.length,maxScroll,fs,lineH,pad,boxW,boxH,x0,y0,titleH,full};
+}
 
+function drawSubtitles(dt){
+  const L=subsCache;
+  const has=!!L;
+  subsPresence+=((has?1:0)-subsPresence)*Math.min(1,dt/300);
+  if(subsPresence<.01||!L){subsBounds=null;subsExpandBox=null;return;}
+  if(fsPanel&&fsPanel!=="subs"){subsBounds=null;subsExpandBox=null;return;}
+
+  const {lines,fs,lineH,pad,boxW,boxH,x0,y0,titleH,full}=L;
+  ctx.save();
   ctx.globalAlpha=subsPresence;
-  ctx.translate(0,rise);
+  ctx.translate(0,(1-subsPresence)*(lineH*.6));
 
-  ctx.fillStyle="rgba(2,10,18,.72)";
+  ctx.fillStyle="rgba(2,10,18,.80)";
   ctx.beginPath();
   const cut=Math.round(fs*.7);
   ctx.moveTo(x0+cut,y0);ctx.lineTo(x0+boxW-cut,y0);
@@ -545,18 +596,41 @@ function drawSubtitles(dt){
   ctx.lineTo(x0+boxW-cut,y0+boxH);ctx.lineTo(x0+cut,y0+boxH);
   ctx.lineTo(x0,y0+boxH-cut);ctx.lineTo(x0,y0+cut);ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.28)`;
+  ctx.strokeStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.30)`;
   ctx.lineWidth=1;ctx.stroke();
 
-  ctx.textAlign="left";
-  drawn.forEach((d,i)=>{
+  let ty=y0+pad;
+  if(titleH){
+    ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.12)`;
+    ctx.fillRect(x0,y0,boxW,titleH);
+    ctx.textAlign="left";ctx.textBaseline="middle";
+    ctx.font=`${Math.round(fs*.85)}px ${UI_FONT}`;
+    ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.9)`;
+    ctx.fillText("TRANSCRIPT",x0+pad,y0+titleH/2);
+    ty=y0+titleH+pad*.6;
+  }
+
+  // the expand control sits top-right of the bar either way
+  const exLabel=full?"COLLAPSE":"FULLSCREEN";
+  ctx.font=`${Math.round(fs*.72)}px ${UI_FONT}`;
+  ctx.textAlign="right";ctx.textBaseline="middle";
+  ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.65)`;
+  const exW=ctx.measureText(exLabel).width;
+  const exY=titleH?y0+titleH/2:y0+pad*.9;
+  ctx.fillText(exLabel,x0+boxW-pad,exY);
+  subsExpandBox={x:x0+boxW-pad-exW-8,y:exY-fs,w:exW+16,h:fs*2};
+
+  ctx.font=`${fs}px ${SUBS_FONT}`;
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+  lines.forEach((d,i)=>{
     ctx.fillStyle=d.mine
       ? `rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.92)`
       : `rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.95)`;
-    ctx.fillText(d.text,x0+pad,y0+pad+lineH*(i+1)-Math.round(fs*.35));
+    ctx.fillText(d.text,x0+pad,ty+lineH*(i+1)-Math.round(fs*.35));
   });
   ctx.restore();
   ctx.globalAlpha=1;ctx.textAlign="left";
+  subsBounds={x:x0,y:y0,w:boxW,h:boxH};
 }
 
 function frame(dt){
@@ -575,6 +649,11 @@ function frame(dt){
   if(thinkingAmt>.2)drawThinking(dt,thinkingAmt);else thinkLabel=null;
   drawStateTag(dt,state,alert);
   drawUsage();
+  // order matters: the captions are measured first so the rail knows what
+  // space to leave, then the panels fill the rail, then the captions draw
+  // on top of nothing at all.
+  subsCache=subsLayout();
+  computeRail();
   drawNotePanel(dt);
   drawTerminal(dt);
   drawSubtitles(dt);
@@ -592,25 +671,40 @@ addEventListener("keydown",e=>{
     document.fullscreenElement?document.exitFullscreen()
       :document.documentElement.requestFullscreen();
   }
-  if(e.key==="Escape"&&termFullscreen)termFullscreen=false;
+  if(e.key==="Escape"&&fsPanel)fsPanel=null;
 });
 
 // swaps to a pointer cursor over any clickable HUD control so it reads as such
 function inBox(b,x,y){
   return b&&x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h;
 }
+function toggleFs(which){ fsPanel = fsPanel===which ? null : which; }
+
 addEventListener("mousemove",e=>{
-  const hit=inBox(noteCloseBox,e.clientX,e.clientY)||inBox(termExpandBox,e.clientX,e.clientY);
+  const hit=inBox(noteCloseBox,e.clientX,e.clientY)
+          ||inBox(noteExpandBox,e.clientX,e.clientY)
+          ||inBox(termExpandBox,e.clientX,e.clientY)
+          ||inBox(subsExpandBox,e.clientX,e.clientY);
   cv.style.cursor=hit?"pointer":"default";
 });
 addEventListener("click",e=>{
-  if(inBox(noteCloseBox,e.clientX,e.clientY))dismissedText=lastNoteText;
-  if(inBox(termExpandBox,e.clientX,e.clientY))termFullscreen=!termFullscreen;
+  // close before expand: the two controls sit next to each other and a
+  // dismiss must never be swallowed by the panel going fullscreen instead.
+  if(inBox(noteCloseBox,e.clientX,e.clientY)){dismissedText=lastNoteText;fsPanel=null;return;}
+  if(inBox(noteExpandBox,e.clientX,e.clientY)){toggleFs("note");return;}
+  if(inBox(termExpandBox,e.clientX,e.clientY)){toggleFs("term");return;}
+  if(inBox(subsExpandBox,e.clientX,e.clientY)){toggleFs("subs");return;}
 });
 addEventListener("wheel",e=>{
-  if(!inBox(termBounds,e.clientX,e.clientY))return;
-  e.preventDefault();
-  termScroll-=Math.sign(e.deltaY)*2;
+  // whichever panel is under the pointer takes the scroll. The note body is
+  // a real DOM element with its own overflow, so it is deliberately absent
+  // here: the browser scrolls it and we must not fight that.
+  if(inBox(termBounds,e.clientX,e.clientY)){
+    e.preventDefault();termScroll-=Math.sign(e.deltaY)*2;return;
+  }
+  if(inBox(subsBounds,e.clientX,e.clientY)){
+    e.preventDefault();subsScroll-=Math.sign(e.deltaY)*2;return;
+  }
 },{passive:false});
 
 if(SHOT){
