@@ -305,9 +305,9 @@ function drawNotePanel(dt){
   }
 
   const pad=Math.round(Math.min(W,H)*.018);
-  const panelW=Math.min(W*.44,820);
-  const titleFs=Math.round(Math.min(W,H)*.026);
-  const bodyFs=Math.round(Math.min(W,H)*.019);
+  const panelW=Math.min(W*.27,480);
+  const titleFs=Math.round(Math.min(W,H)*.024);
+  const bodyFs=Math.round(Math.min(W,H)*.017);
   // the poster picks the style per note: "term" for commands/paths/data,
   // where a fixed-width face is what makes it legible; "doc" for prose,
   // where a normal document face reads better. Sticks through fade-out.
@@ -334,7 +334,7 @@ function drawNotePanel(dt){
   noteTextEl.style.height="auto";
   noteTextEl.style.maxHeight="none";
   const naturalH=noteTextEl.scrollHeight;
-  const bodyH=Math.min(naturalH,H*.78-titleH-pad);
+  const bodyH=Math.max(Math.min(naturalH,H*.80-titleH-pad),Math.min(naturalH,H*.20));
   const panelH=titleH+bodyH+pad*1.3;
 
   const x0=Math.round(Math.min(W,H)*.03);
@@ -410,7 +410,7 @@ function drawTerminal(dt){
   const pad=Math.round(Math.min(W,H)*.014);
   const lineFs=termFullscreen
     ? Math.max(13,Math.round(Math.min(W,H)*.02))
-    : Math.max(13,Math.round(Math.min(W,H)*.018));
+    : Math.max(12,Math.round(Math.min(W,H)*.016));
   const titleH=Math.round(lineFs*2.2);
   const lineH=lineFs*1.5;
   let panelW,panelH,rows,x0,y0;
@@ -420,8 +420,8 @@ function drawTerminal(dt){
     rows=Math.max(3,Math.floor((panelH-titleH-pad)/lineH));
     x0=pad;y0=pad;
   }else{
-    panelW=Math.min(W*.44,820);
-    rows=Math.min(12,Math.max(3,Math.floor((H*.62)/lineH)));
+    panelW=Math.min(W*.27,480);
+    rows=Math.min(22,Math.max(3,Math.floor((H*.80)/lineH)));
     panelH=titleH+rows*lineH+pad;
     x0=Math.round(W-Math.min(W,H)*.03-panelW);
     y0=Math.round(Math.max(pad,Math.min(H*.5-panelH/2,H-pad-panelH)));
@@ -486,6 +486,79 @@ function drawTerminal(dt){
 
 /* ---------------- frame ---------------- */
 let now=0,thinkingAmt=0;
+
+/* ---------------- subtitles: the spoken conversation, in case you
+   were not listening. Fed by .voice_transcript, which backtalk writes one
+   line at a time. Bottom centre, above the state tag, newest at the bottom
+   like real subtitles. ---------------- */
+let subsPresence=0;
+function drawSubtitles(dt){
+  const items=AV.transcript||[];
+  const has=items.length>0;
+  subsPresence+=((has?1:0)-subsPresence)*Math.min(1,dt/300);
+  if(subsPresence<.01)return;
+
+  const fs=Math.max(13,Math.round(Math.min(W,H)*.021));
+  const lineH=Math.round(fs*1.45);
+  const maxW=Math.min(W*.62,1180);
+  const pad=Math.round(Math.min(W,H)*.016);
+  const MAXLINES=5;
+
+  ctx.save();
+  ctx.font=`${fs}px 'SF Mono',Menlo,Consolas,monospace`;
+  ctx.textBaseline="alphabetic";
+
+  // wrap newest-first so a long final line never pushes itself off screen
+  const drawn=[];
+  for(let i=items.length-1;i>=0&&drawn.length<MAXLINES;i--){
+    const it=items[i]||{};
+    const mine=String(it.role||"").toLowerCase()==="you";
+    const prefix=(mine?"YOU":String(it.role||AV.name).toUpperCase())+"  ";
+    const words=String(it.text||"").split(" ");
+    const wrapped=[];
+    let line=prefix;
+    for(const w of words){
+      const t=line?line+" "+w:w;
+      if(ctx.measureText(t).width>maxW-pad*2&&line!==prefix){wrapped.push(line);line="      "+w;}
+      else line=t;
+    }
+    if(line.trim())wrapped.push(line);
+    for(let k=wrapped.length-1;k>=0&&drawn.length<MAXLINES;k--)
+      drawn.unshift({text:wrapped[k],mine});
+  }
+  if(!drawn.length){ctx.restore();return;}
+
+  const boxH=drawn.length*lineH+pad*1.4;
+  const boxW=maxW;
+  const x0=Math.round(cx-boxW/2);
+  const y0=Math.round(H-Math.min(W,H)*.085-boxH);
+  const rise=(1-subsPresence)*(lineH*.6);
+
+  ctx.globalAlpha=subsPresence;
+  ctx.translate(0,rise);
+
+  ctx.fillStyle="rgba(2,10,18,.72)";
+  ctx.beginPath();
+  const cut=Math.round(fs*.7);
+  ctx.moveTo(x0+cut,y0);ctx.lineTo(x0+boxW-cut,y0);
+  ctx.lineTo(x0+boxW,y0+cut);ctx.lineTo(x0+boxW,y0+boxH-cut);
+  ctx.lineTo(x0+boxW-cut,y0+boxH);ctx.lineTo(x0+cut,y0+boxH);
+  ctx.lineTo(x0,y0+boxH-cut);ctx.lineTo(x0,y0+cut);ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.28)`;
+  ctx.lineWidth=1;ctx.stroke();
+
+  ctx.textAlign="left";
+  drawn.forEach((d,i)=>{
+    ctx.fillStyle=d.mine
+      ? `rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.92)`
+      : `rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.95)`;
+    ctx.fillText(d.text,x0+pad,y0+pad+lineH*(i+1)-Math.round(fs*.35));
+  });
+  ctx.restore();
+  ctx.globalAlpha=1;ctx.textAlign="left";
+}
+
 function frame(dt){
   AV.tick(dt);
   now+=dt;
@@ -504,6 +577,7 @@ function frame(dt){
   drawUsage();
   drawNotePanel(dt);
   drawTerminal(dt);
+  drawSubtitles(dt);
   if(alert)drawAlertFrame(now);
 }
 

@@ -39,6 +39,8 @@
      AV.note       {title,text} or null — free text dropped on the bus
                    (.agent_note) by whatever is driving the session, for
                    a face to render as a HUD panel; null when empty
+     AV.transcript [{ts,role,text}, ...], oldest first, the spoken
+                   conversation as captions (.voice_transcript)
      AV.activity   [{ts,tool,detail}, ...], oldest first, kept by a
                    PreToolUse hook (.agent_activity) — a live "what is
                    Jarvis doing" feed a face can render as a terminal
@@ -79,7 +81,7 @@ const AV = (() => {
 
   const A = {
     state: "idle", level: 0, env: 0, alert: false, micLevel: 0,
-    stateElapsed: 0, note: null, activity: [],
+    stateElapsed: 0, note: null, activity: [], transcript: [],
     samples: new Float32Array(64),
     name: "JARVIS", label: "J.A.R.V.I.S.", badge: "",
     demo: DEMO, shot: SHOT, faces: [],
@@ -173,6 +175,7 @@ const AV = (() => {
     A.rateLimits = raw.rate_limits || {};
     A.note = (raw.note && raw.note.text) ? raw.note : null;
     A.activity = Array.isArray(raw.activity) ? raw.activity : [];
+    A.transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
     A.level = raw.level || 0;
 
     // adaptive envelope: normalize against a decaying peak, then ease

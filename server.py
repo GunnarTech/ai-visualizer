@@ -52,6 +52,10 @@ voice line (backtalk writes them natively, github.com/jaredrhod/backtalk):
                        face can surface it as a HUD panel. Empty/missing
                        file = no panel. Overwrite to update it, delete or
                        empty it to dismiss.
+  .voice_transcript   optional, written by backtalk: JSON array of the last
+                       ~60 {"ts", "role", "text"} spoken lines, role being
+                       "you" or the agent's name. Subtitles, and a scrollback
+                       for when the listener was not listening.
   .agent_activity      optional, NOT written by backtalk: JSON array of
                        the last ~30 {"ts", "tool", "detail"} entries, kept
                        current by the project's PreToolUse hook
@@ -218,9 +222,19 @@ def read_bus():
             activity = []
     except (OSError, ValueError):
         pass
+    # Rolling conversation captions, written by backtalk: one entry per
+    # spoken line, {"ts", "role", "text"}. Subtitles, and a scrollback for
+    # when the room was noisy.
+    transcript = []
+    try:
+        transcript = json.loads((BUS / ".voice_transcript").read_text(encoding="utf-8"))
+        if not isinstance(transcript, list):
+            transcript = []
+    except (OSError, ValueError):
+        pass
     return {"state": state, "level": level, "samples": samples,
             "alert": alert, "loading": loading, "rate_limits": rate_limits,
-            "note": note, "activity": activity}
+            "note": note, "activity": activity, "transcript": transcript}
 
 
 INBOX_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
