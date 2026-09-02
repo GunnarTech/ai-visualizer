@@ -239,12 +239,11 @@ function drawListening(){
 let thinkLabel=null, stateTag=null, tagState="";
 function drawTitle(){
   ctx.textAlign="center";ctx.textBaseline="top";
-  ctx.font=`${Math.round(Math.min(W,H)*.038)}px ${UI_FONT}`;
-  ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.85)`;
+  // One name only. The dotted AV.label was drawn underneath, which read as
+  // the name printed twice rather than as a subtitle.
+  ctx.font=`${Math.round(Math.min(W,H)*.058)}px ${UI_FONT}`;
+  ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.9)`;
   ctx.fillText(Array.from(AV.name).join(" "),cx,20);
-  ctx.font=`${Math.round(Math.min(W,H)*.018)}px ${UI_FONT}`;
-  ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.5)`;
-  ctx.fillText(AV.label,cx,20+Math.round(Math.min(W,H)*.05));
   ctx.textAlign="left";ctx.textBaseline="alphabetic";
 }
 function drawThinking(dt,thinkAmt){
@@ -306,9 +305,9 @@ function drawNotePanel(dt){
   }
 
   const pad=Math.round(Math.min(W,H)*.018);
-  const panelW=Math.min(W*.36,560);
-  const titleFs=Math.round(Math.min(W,H)*.022);
-  const bodyFs=Math.round(Math.min(W,H)*.0155);
+  const panelW=Math.min(W*.44,820);
+  const titleFs=Math.round(Math.min(W,H)*.026);
+  const bodyFs=Math.round(Math.min(W,H)*.019);
   // the poster picks the style per note: "term" for commands/paths/data,
   // where a fixed-width face is what makes it legible; "doc" for prose,
   // where a normal document face reads better. Sticks through fade-out.
@@ -335,7 +334,7 @@ function drawNotePanel(dt){
   noteTextEl.style.height="auto";
   noteTextEl.style.maxHeight="none";
   const naturalH=noteTextEl.scrollHeight;
-  const bodyH=Math.min(naturalH,H*.72-titleH-pad);
+  const bodyH=Math.min(naturalH,H*.78-titleH-pad);
   const panelH=titleH+bodyH+pad*1.3;
 
   const x0=Math.round(Math.min(W,H)*.03);
@@ -411,7 +410,7 @@ function drawTerminal(dt){
   const pad=Math.round(Math.min(W,H)*.014);
   const lineFs=termFullscreen
     ? Math.max(13,Math.round(Math.min(W,H)*.02))
-    : Math.max(11,Math.round(Math.min(W,H)*.0145));
+    : Math.max(13,Math.round(Math.min(W,H)*.018));
   const titleH=Math.round(lineFs*2.2);
   const lineH=lineFs*1.5;
   let panelW,panelH,rows,x0,y0;
@@ -421,8 +420,8 @@ function drawTerminal(dt){
     rows=Math.max(3,Math.floor((panelH-titleH-pad)/lineH));
     x0=pad;y0=pad;
   }else{
-    panelW=Math.min(W*.34,520);
-    rows=Math.min(8,Math.max(3,Math.floor((H*.5)/lineH)));
+    panelW=Math.min(W*.44,820);
+    rows=Math.min(12,Math.max(3,Math.floor((H*.62)/lineH)));
     panelH=titleH+rows*lineH+pad;
     x0=Math.round(W-Math.min(W,H)*.03-panelW);
     y0=Math.round(Math.max(pad,Math.min(H*.5-panelH/2,H-pad-panelH)));
