@@ -25,12 +25,18 @@ Serves the face gallery at http://127.0.0.1:8790/ and exposes:
             "level":  0.0-1.0,       voice loudness while speaking
             "samples": [64 floats],  raw waveform snapshot (0s when quiet)
             "alert":  bool,          optional attention signal
-            "loading": bool}         true while the voice line plays its
+            "loading": bool,         true while the voice line plays its
                                      own thinking sound (we stay quiet)
+            "note": {...},           see .agent_note below
+            "activity": [...]}       see .agent_activity below
   /config  the merged ai-visualizer.json plus the list of installed
            faces, discovered by scanning the faces/ folder. Drop a new
            folder with an index.html into faces/ and it appears in the
            gallery. That is the whole plugin system.
+  /inbox   POST, image bytes with an image/* Content-Type. Writes
+           inbox/paste-<timestamp>.<ext> AND inbox/latest.<ext> under the
+           bus dir, so a paste (Ctrl+V, e.g. a Win+Shift+S snip) from any
+           face reaches whatever is driving the session at a fixed path.
 
 READ-ONLY on the signal bus. The bus is three tiny files written by a
 voice line (backtalk writes them natively, github.com/jaredrhod/backtalk):
@@ -39,6 +45,19 @@ voice line (backtalk writes them natively, github.com/jaredrhod/backtalk):
   .voice_waveform     JSON {ts, samples: [64 floats]} while audio plays
   .voice_loading_pid  exists while the voice line plays a thinking sound
   .voice_alert        optional: non-empty file = attention needed
+  .agent_note         optional, NOT written by backtalk: JSON
+                       {"title": str, "text": str} that whatever agent is
+                       driving the session (Claude Code, a script, anything
+                       with filesystem access) can drop on the bus so a
+                       face can surface it as a HUD panel. Empty/missing
+                       file = no panel. Overwrite to update it, delete or
+                       empty it to dismiss.
+  .agent_activity      optional, NOT written by backtalk: JSON array of
+                       the last ~30 {"ts", "tool", "detail"} entries, kept
+                       current by the project's PreToolUse hook
+                       (.claude/hooks/activity_log.py) on every tool call,
+                       so a face can show a live "what is Jarvis doing"
+                       feed instead of looking idle during silent work.
 
 Where the bus lives comes from "bus_dir" in ai-visualizer.json (default:
 this folder). Point it at your backtalk folder, or point backtalk's
@@ -144,7 +163,8 @@ def mock_bus():
             "rate_limits": {
                 "five_hour": {"utilization": 0.34, "resets_at": t + 9200},
                 "seven_day": {"utilization": 0.61, "resets_at": t + 288000},
-            }}
+            },
+            "note": {}, "activity": []}
 
 
 def read_bus():
@@ -183,11 +203,70 @@ def read_bus():
         rate_limits = json.loads((BUS / ".voice_rate_limits").read_text())
     except (OSError, ValueError):
         pass
+    note = {}
+    try:
+        note = json.loads((BUS / ".agent_note").read_text())
+    except (OSError, ValueError):
+        pass
+    # A PreToolUse hook (.claude/hooks/activity_log.py) appends here on
+    # every tool call, so a face can show what is actually happening
+    # instead of going idle-looking during a long silent stretch of work.
+    activity = []
+    try:
+        activity = json.loads((BUS / ".agent_activity").read_text())
+        if not isinstance(activity, list):
+            activity = []
+    except (OSError, ValueError):
+        pass
     return {"state": state, "level": level, "samples": samples,
-            "alert": alert, "loading": loading, "rate_limits": rate_limits}
+            "alert": alert, "loading": loading, "rate_limits": rate_limits,
+            "note": note, "activity": activity}
+
+
+INBOX_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+             "image/webp": "webp"}
+INBOX_MAX = 25 * 1024 * 1024
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        try:
+            if path == "/inbox":
+                self._inbox()
+            else:
+                self._send(b"not found", "text/plain", 404)
+        except ConnectionError:
+            pass
+        except Exception as e:
+            body = json.dumps({"error": str(e)}).encode()
+            try:
+                self._send(body, "application/json", 500)
+            except ConnectionError:
+                pass
+
+    def _inbox(self):
+        # A screen-snip pasted into any face lands here and is written
+        # straight to the bus, so whatever is driving the session can just
+        # read inbox/latest.<ext> without needing to be told the filename.
+        length = int(self.headers.get("Content-Length", 0))
+        if length <= 0 or length > INBOX_MAX:
+            self._send(json.dumps({"error": "bad length"}).encode(),
+                       "application/json", 400)
+            return
+        data = self.rfile.read(length)
+        ext = INBOX_EXT.get(self.headers.get("Content-Type", ""), "png")
+        d = BUS / "inbox"
+        d.mkdir(parents=True, exist_ok=True)
+        name = f"paste-{time.strftime('%Y%m%d-%H%M%S')}.{ext}"
+        (d / name).write_bytes(data)
+        (d / f"latest.{ext}").write_bytes(data)
+        for other in INBOX_EXT.values():
+            if other != ext:
+                (d / f"latest.{other}").unlink(missing_ok=True)
+        self._send(json.dumps({"ok": True, "file": name}).encode(),
+                   "application/json")
+
     def do_GET(self):
         path = self.path.split("?")[0]
         try:
