@@ -160,12 +160,14 @@ const AV = (() => {
   }
 
   // A chart is present if it carries rows a face could actually draw —
-  // a flat/pie series ("data") or at least one grouped-bar series with
-  // rows ("bars"), independent of which face is looking at it.
+  // a flat/pie series ("data"), at least one grouped-bar series with rows
+  // ("bars"), or at least one named network ("networks", topology) —
+  // independent of which face is looking at it.
   function noteChartPresent(c) {
     if (!c) return false;
     if (Array.isArray(c.data) && c.data.length) return true;
     if (Array.isArray(c.bars) && c.bars.some(b => Array.isArray(b.data) && b.data.length)) return true;
+    if (Array.isArray(c.networks) && c.networks.length) return true;
     return false;
   }
 
