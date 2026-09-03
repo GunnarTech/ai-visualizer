@@ -380,8 +380,37 @@ const noteTextEl=document.getElementById("noteText");
 // onto the canvas (it's not selectable text, so it doesn't need the DOM
 // element the way the body copy does), and it eats the top of the body
 // area; any text that came with it fills whatever room is left below.
+// Three chart shapes share the bus field: "bar" (default, a flat list —
+// drawChartBars), "combo" (grouped bars plus one line on its own right-
+// hand axis — drawChartCombo, for series on incompatible scales), and
+// "pie" (drawChartPie). Type is inferred from shape when `type` is
+// omitted, so the original bar-only notes keep working unchanged.
+function chartTypeOf(c){
+  if(!c)return null;
+  if(c.type==="pie"&&Array.isArray(c.data)&&c.data.length)return "pie";
+  if(c.type==="combo"&&Array.isArray(c.bars)&&c.bars.some(b=>Array.isArray(b.data)&&b.data.length))return "combo";
+  if(Array.isArray(c.data)&&c.data.length)return "bar";
+  return null;
+}
 function noteHasChart(n){
-  return !!(n&&n.chart&&Array.isArray(n.chart.data)&&n.chart.data.length);
+  return !!(n&&chartTypeOf(n.chart));
+}
+function fmtAxisVal(v,unit){
+  const s=Math.round(v).toString();
+  return unit?s+unit:s;
+}
+function hslToRgbArr(h,s,l){
+  s/=100;l/=100;
+  const k=n=>(n+h/30)%12;
+  const a=s*Math.min(l,1-l);
+  const f=n=>l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1)));
+  return [Math.round(f(0)*255),Math.round(f(8)*255),Math.round(f(4)*255)];
+}
+// slice 0 lands near amber (28deg) so a one-slice pie doesn't clash with
+// the rest of the HUD; desaturated/dimmed to match the steel-and-amber
+// palette instead of reading as a stock chart-library rainbow.
+function pieColor(i,n){
+  return hslToRgbArr(Math.round((i*360/Math.max(1,n)+28)%360),52,56);
 }
 function drawChartBars(chart,x0,y0,panelW,rowH,pad,bodyPx){
   const data=chart.data;
@@ -423,6 +452,174 @@ function drawChartBars(chart,x0,y0,panelW,rowH,pad,bodyPx){
   });
   ctx.textAlign="left";ctx.textBaseline="alphabetic";
 }
+// Grouped bars (1-2 series, same scale) plus one line on its own right-hand
+// axis — for metrics that don't share a scale, like leads/intro sales
+// against net revenue. bars[].data and line.data must share the same
+// label order; nothing here re-sorts or re-aligns them.
+const COMBO_BAR_COLORS=[AMBER,CYAN];
+function drawChartCombo(chart,x0,y0,w,h,pad,bodyPx){
+  const bars=(chart.bars||[]).filter(b=>Array.isArray(b.data)&&b.data.length);
+  const line=(chart.line&&Array.isArray(chart.line.data)&&chart.line.data.length)?chart.line:null;
+  if(!bars.length&&!line)return;
+  const labels=(bars[0]?bars[0].data:line.data).map(d=>String(d.label??""));
+  const n=labels.length;
+  if(!n)return;
+
+  const fs=Math.round(bodyPx*.92);
+  ctx.font=`${fs}px 'SF Mono',Menlo,Consolas,monospace`;
+  ctx.textBaseline="middle";
+
+  // legend: swatch + name per bar series, then a line sample + name
+  let lx=x0;
+  const ly=y0+Math.round(fs*.9);
+  const swS=Math.round(fs*.55);
+  bars.forEach((b,i)=>{
+    const col=COMBO_BAR_COLORS[i%COMBO_BAR_COLORS.length];
+    ctx.fillStyle=`rgba(${col[0]},${col[1]},${col[2]},.9)`;
+    ctx.fillRect(lx,ly-swS/2,swS,swS);
+    lx+=swS+pad*.4;
+    ctx.textAlign="left";
+    ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.9)`;
+    const t=b.name||`Series ${i+1}`;
+    ctx.fillText(t,lx,ly);
+    lx+=ctx.measureText(t).width+pad*1.1;
+  });
+  if(line){
+    ctx.strokeStyle=`rgba(${WHITE[0]},${WHITE[1]},${WHITE[2]},.9)`;
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(lx+swS*1.6,ly);ctx.stroke();
+    lx+=swS*1.6+pad*.4;
+    ctx.fillStyle=`rgba(${WHITE[0]},${WHITE[1]},${WHITE[2]},.9)`;
+    ctx.fillText(line.name||"Line",lx,ly);
+  }
+
+  // axis columns are measured, not guessed, same rule as the bar chart
+  const maxBar=bars.length?Math.max(1e-9,...bars.flatMap(b=>b.data.map(d=>Math.abs(Number(d.value)||0)))):0;
+  const maxLine=line?Math.max(1e-9,...line.data.map(d=>Math.abs(Number(d.value)||0))):0;
+  const barTopLabel=bars.length?fmtAxisVal(maxBar*1.08,bars[0].unit):"";
+  const lineTopLabel=line?fmtAxisVal(maxLine*1.12,line.unit):"";
+  const leftAxisW=bars.length?ctx.measureText(barTopLabel).width+pad*.5:0;
+  const rightAxisW=line?ctx.measureText(lineTopLabel).width+pad*.5:0;
+
+  const legendH=Math.round(fs*2.1);
+  const xAxisH=Math.round(fs*1.6);
+  const plotL=x0+leftAxisW;
+  const plotR=x0+w-rightAxisW;
+  const plotW=Math.max(20,plotR-plotL);
+  const plotT=y0+legendH;
+  const plotB=y0+h-xAxisH;
+  const plotH=Math.max(20,plotB-plotT);
+
+  ctx.strokeStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.18)`;
+  ctx.lineWidth=1;
+  [0,.5,1].forEach(f=>{
+    const gy=plotB-plotH*f;
+    ctx.beginPath();ctx.moveTo(plotL,gy);ctx.lineTo(plotR,gy);ctx.stroke();
+  });
+
+  if(bars.length){
+    ctx.textAlign="right";
+    ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.75)`;
+    ctx.fillText(barTopLabel,plotL-pad*.3,plotT+fs*.5);
+    ctx.fillText("0",plotL-pad*.3,plotB-fs*.3);
+  }
+  if(line){
+    ctx.textAlign="left";
+    ctx.fillStyle=`rgba(${WHITE[0]},${WHITE[1]},${WHITE[2]},.75)`;
+    ctx.fillText(lineTopLabel,plotR+pad*.3,plotT+fs*.5);
+    ctx.fillText("0",plotR+pad*.3,plotB-fs*.3);
+  }
+
+  const groupW=plotW/n;
+  const barGap=groupW*.18;
+  const barCount=Math.max(1,bars.length);
+  const barW=Math.max(2,(groupW-barGap*(barCount+1))/barCount);
+  bars.forEach((b,bi)=>{
+    const col=COMBO_BAR_COLORS[bi%COMBO_BAR_COLORS.length];
+    ctx.fillStyle=`rgba(${col[0]},${col[1]},${col[2]},.85)`;
+    b.data.forEach((d,i)=>{
+      const v=Number(d.value)||0;
+      const bh=Math.max(0,(v/(maxBar*1.08))*plotH);
+      const bx=plotL+i*groupW+barGap*(bi+1)+barW*bi;
+      ctx.fillRect(bx,plotB-bh,barW,bh);
+    });
+  });
+
+  if(line){
+    ctx.strokeStyle=`rgba(${WHITE[0]},${WHITE[1]},${WHITE[2]},.9)`;
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    line.data.forEach((d,i)=>{
+      const px=plotL+i*groupW+groupW/2;
+      const py=plotB-((Number(d.value)||0)/(maxLine*1.12))*plotH;
+      i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+    });
+    ctx.stroke();
+    ctx.fillStyle=`rgba(${WHITE[0]},${WHITE[1]},${WHITE[2]},.95)`;
+    line.data.forEach((d,i)=>{
+      const px=plotL+i*groupW+groupW/2;
+      const py=plotB-((Number(d.value)||0)/(maxLine*1.12))*plotH;
+      ctx.beginPath();ctx.arc(px,py,Math.max(2,fs*.16),0,6.2832);ctx.fill();
+    });
+  }
+
+  ctx.textAlign="center";
+  ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.85)`;
+  labels.forEach((lbl,i)=>{
+    ctx.fillText(lbl,plotL+i*groupW+groupW/2,plotB+fs*1.15);
+  });
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+}
+// A slice per data point, procedurally hued so an arbitrary category count
+// (departments, sources, whatever) never runs out of distinct colors, plus
+// a legend list — a pie with no legend is just a mystery ring of color.
+function drawChartPie(chart,x0,y0,w,h,pad,bodyPx){
+  const data=(chart.data||[]).filter(d=>(Number(d.value)||0)>0);
+  const total=data.reduce((s,d)=>s+(Number(d.value)||0),0);
+  if(!data.length||total<=0)return;
+  const fs=Math.round(bodyPx*.92);
+  ctx.font=`${fs}px 'SF Mono',Menlo,Consolas,monospace`;
+  const unit=chart.unit||"";
+
+  const legendTexts=data.map(d=>`${d.label} ${Math.round((Number(d.value)||0)/total*100)}%`);
+  const legendW=Math.min(w*.55,Math.max(...legendTexts.map(t=>ctx.measureText(t).width))+fs*1.6);
+  const plotW=Math.max(20,w-legendW-pad);
+  const r=Math.max(10,Math.min(plotW,h)/2-pad*.5);
+  const cx=x0+plotW/2, cy=y0+h/2;
+
+  const colors=data.map((d,i)=>pieColor(i,data.length));
+  let start=-Math.PI/2;
+  data.forEach((d,i)=>{
+    const end=start+((Number(d.value)||0)/total)*6.2832;
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,start,end);ctx.closePath();
+    const col=colors[i];
+    ctx.fillStyle=`rgba(${col[0]},${col[1]},${col[2]},.85)`;
+    ctx.fill();
+    ctx.strokeStyle="rgba(4,10,16,.9)";ctx.lineWidth=1.5;ctx.stroke();
+    start=end;
+  });
+
+  const lx=x0+plotW+pad;
+  const rowH=Math.max(fs*1.1,Math.min(Math.round(fs*1.9),h/data.length));
+  let ly=y0+Math.max(0,(h-rowH*data.length)/2)+rowH/2;
+  const swS=Math.round(fs*.6);
+  ctx.textBaseline="middle";
+  data.forEach((d,i)=>{
+    const col=colors[i];
+    ctx.fillStyle=`rgba(${col[0]},${col[1]},${col[2]},.9)`;
+    ctx.fillRect(lx,ly-swS/2,swS,swS);
+    ctx.textAlign="left";
+    ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.95)`;
+    const pct=Math.round((Number(d.value)||0)/total*100);
+    const valTxt=unit?` (${d.value}${unit})`:"";
+    let lbl=String(d.label??"");
+    const room=legendW-swS-pad*.6;
+    while(lbl.length>1&&ctx.measureText(`${lbl}  ${pct}%${valTxt}`).width>room)lbl=lbl.slice(0,-1);
+    ctx.fillText(`${lbl}  ${pct}%${valTxt}`,lx+swS+pad*.4,ly);
+    ly+=rowH;
+  });
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+}
 function drawNotePanel(dt){
   const noteHasContent=!!(AV.note&&(AV.note.text||noteHasChart(AV.note)));
   const has=noteHasContent&&AV.note.text!==dismissedText;
@@ -456,6 +653,7 @@ function drawNotePanel(dt){
   if(has)lastNoteText=text;
   const chart=has?(noteHasChart(AV.note)?AV.note.chart:null):lastNoteChart;
   if(has)lastNoteChart=chart;
+  const chartType=chartTypeOf(chart);
   const hasText=!!text;
   const titleH=Math.round(titleFs*2);
 
@@ -483,12 +681,19 @@ function drawNotePanel(dt){
   const slideIn=full?0:(1-notePresence)*-(panelW*.15);
 
   // chart eats the top of the body; text (if any) gets whatever's left.
-  // Row height shrinks to fit before rows ever get clipped off.
-  const chartRows=(chart&&!mini)?chart.data.length:0;
+  // Row height shrinks to fit before rows ever get clipped off. Combo and
+  // pie don't have a natural row count the way a flat bar list does, so
+  // they just take whatever the allotment gives them.
+  const chartRows=(chartType==="bar"&&!mini)?chart.data.length:0;
   const idealRowH=Math.round(bodyPx*2.1);
   const maxChartH=bodyH*(hasText?.55:.92);
-  const chartRowH=chartRows?Math.max(Math.round(bodyPx*1.3),Math.min(idealRowH,maxChartH/chartRows)):0;
-  const chartH=chartRows?chartRowH*chartRows:0;
+  let chartRowH=0,chartH=0;
+  if(chartType==="bar"){
+    chartRowH=chartRows?Math.max(Math.round(bodyPx*1.3),Math.min(idealRowH,maxChartH/chartRows)):0;
+    chartH=chartRows?chartRowH*chartRows:0;
+  }else if((chartType==="combo"||chartType==="pie")&&!mini){
+    chartH=maxChartH;
+  }
   const chartGap=(chartH&&hasText)?Math.round(pad*.9):0;
   const textH=Math.max(0,bodyH-chartH-chartGap);
 
@@ -536,7 +741,13 @@ function drawNotePanel(dt){
   noteExpandBox={x:exCx-exS+slideIn,y:y0,w:exS*2,h:titleH};
   noteBounds={x:x0+slideIn,y:y0,w:panelW,h:panelH};
 
-  if(chartRows)drawChartBars(chart,x0,y0+titleH+pad*.65,panelW,chartRowH,pad,bodyPx);
+  if(chartType==="bar"&&chartRows){
+    drawChartBars(chart,x0,y0+titleH+pad*.65,panelW,chartRowH,pad,bodyPx);
+  }else if(chartType==="combo"&&chartH>20){
+    drawChartCombo(chart,x0+pad,y0+titleH+pad*.65,panelW-pad*2,chartH,pad,bodyPx);
+  }else if(chartType==="pie"&&chartH>20){
+    drawChartPie(chart,x0+pad,y0+titleH+pad*.65,panelW-pad*2,chartH,pad,bodyPx);
+  }
 
   ctx.restore();                       // end clip
   ctx.textBaseline="alphabetic";ctx.textAlign="left";

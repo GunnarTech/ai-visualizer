@@ -159,6 +159,16 @@ const AV = (() => {
         * Math.abs(Math.sin(tt * 0.61));
   }
 
+  // A chart is present if it carries rows a face could actually draw —
+  // a flat/pie series ("data") or at least one grouped-bar series with
+  // rows ("bars"), independent of which face is looking at it.
+  function noteChartPresent(c) {
+    if (!c) return false;
+    if (Array.isArray(c.data) && c.data.length) return true;
+    if (Array.isArray(c.bars) && c.bars.some(b => Array.isArray(b.data) && b.data.length)) return true;
+    return false;
+  }
+
   /* ----------------------- envelope + samples easing ----------------------- */
   let peak = 0.05, sPeak = 200;
   let stateSince = 0;
@@ -173,7 +183,7 @@ const AV = (() => {
     // Empty unless the voice line was told to publish usage. A face that
     // wants to draw it reads AV.rateLimits; every other face ignores it.
     A.rateLimits = raw.rate_limits || {};
-    A.note = (raw.note && (raw.note.text || (raw.note.chart && Array.isArray(raw.note.chart.data) && raw.note.chart.data.length))) ? raw.note : null;
+    A.note = (raw.note && (raw.note.text || noteChartPresent(raw.note.chart))) ? raw.note : null;
     A.activity = Array.isArray(raw.activity) ? raw.activity : [];
     A.transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
     A.level = raw.level || 0;
