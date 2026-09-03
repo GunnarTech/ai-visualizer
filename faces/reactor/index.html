@@ -295,6 +295,18 @@ function drawUsage(){
 /* A drawn expand/collapse control rather than the word FULLSCREEN. The word
    ate a third of a 480px title bar and collided with any real title; corner
    brackets read instantly, cost ~14px, and cannot be missing from a font. */
+function minIcon(x,y,s,mini,alpha){
+  // a bar, low in the box: the universal minimise. When already minimised it
+  // gains a roof, so the same control reads as "restore" without a second icon.
+  ctx.save();
+  ctx.strokeStyle=`rgba(${alpha})`;
+  ctx.lineWidth=Math.max(1.3,s*.12);
+  ctx.lineCap="round";
+  const h=s/2;
+  ctx.beginPath();ctx.moveTo(x-h,y+h*.55);ctx.lineTo(x+h,y+h*.55);ctx.stroke();
+  if(mini){ctx.beginPath();ctx.moveTo(x-h,y-h*.45);ctx.lineTo(x+h,y-h*.45);ctx.stroke();}
+  ctx.restore();
+}
 function expandIcon(x,y,s,full,alpha){
   const h=s/2, a=s*.36, inset=full?a*.9:0;
   ctx.save();
@@ -319,6 +331,10 @@ function expandIcon(x,y,s,full,alpha){
    stand down completely while it is, which is what stops the panel
    underneath bleeding through the one on top. */
 let fsPanel=null;                 // null | "note" | "term" | "subs"
+// Minimised, not closed: a panel collapses to its own title bar and stays
+// there, so nothing is ever thrown away and the control that hid it is the
+// control that brings it back.
+let minPanel={note:false,term:false,subs:false};
 let RAIL={w:0,top:0,bottom:0,h:0,left:0,right:0};
 let subsCache=null;               // this frame's caption geometry
 function computeRail(){
@@ -350,6 +366,7 @@ function drawNotePanel(dt){
     return;
   }
   const full=fsPanel==="note";
+  const mini=minPanel.note&&!full;
   const pad=Math.round(Math.min(W,H)*.018);
   const panelW=full?W-pad*2:RAIL.w;
   const titleFs=Math.round(Math.min(W,H)*.024);
@@ -382,8 +399,8 @@ function drawNotePanel(dt){
   // The frame is the rail, not the text. A short note leaves empty space
   // rather than shrinking, so left and right stay the same size; a long one
   // scrolls inside it. The DOM body already has overflow-y:auto.
-  const panelH=full?H-pad*2:RAIL.h;
-  const bodyH=panelH-titleH-pad*1.3;
+  const panelH=full?H-pad*2:(mini?titleH:RAIL.h);
+  const bodyH=Math.max(0,panelH-titleH-pad*1.3);
   const x0=full?pad:RAIL.left;
   const y0=full?pad:RAIL.top;
   const slideIn=full?0:(1-notePresence)*-(panelW*.15);
@@ -428,9 +445,8 @@ function drawNotePanel(dt){
   ctx.fillText(title,x0+pad,y0+titleH/2);
   if(has)lastNoteTitle=AV.note.title;
 
-  ctx.textAlign="center";
-  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.9)`;
-  ctx.fillText("×",x0+panelW-closeW/2,y0+titleH/2);
+  const miS=Math.round(titleH*.42);
+  minIcon(x0+panelW-closeW/2,y0+titleH/2,miS,mini,`${AMBER[0]},${AMBER[1]},${AMBER[2]},.85`);
   noteCloseBox={x:x0+panelW-closeW+slideIn,y:y0,w:closeW,h:titleH};
 
   const exCx=x0+panelW-closeW-pad*.5-exS/2;
@@ -447,8 +463,8 @@ function drawNotePanel(dt){
   noteTextEl.style.height=`${bodyH}px`;
   noteTextEl.style.maxHeight=`${bodyH}px`;
   noteTextEl.style.color=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.95)`;
-  noteTextEl.style.opacity=notePresence;
-  noteTextEl.style.pointerEvents=has?"auto":"none";
+  noteTextEl.style.opacity=mini?0:notePresence;
+  noteTextEl.style.pointerEvents=(has&&!mini)?"auto":"none";
 }
 let lastNoteText="",lastNoteTitle="",lastNoteStyle="term",dismissedText=null,
     noteCloseBox=null,noteExpandBox=null,noteBounds=null;
@@ -465,7 +481,7 @@ function drawAlertFrame(t){
    that fires on every tool call, so this reads as an actual scrolling
    terminal — not a vibe — the whole time a turn is silently working. */
 const TERM_GREEN=[130,230,150];
-let termPresence=0,termScroll=0;
+let termPresence=0,termScroll=0,termMinBox=null;
 let termBounds=null,termExpandBox=null;
 function drawTerminal(dt){
   // once there's ANYTHING to show, the panel stays up — no auto-hide, so
@@ -476,6 +492,7 @@ function drawTerminal(dt){
   if(termPresence<.01){termBounds=null;termExpandBox=null;return;}
   if(fsPanel&&fsPanel!=="term"){termBounds=null;termExpandBox=null;return;}
   const termFullscreen=fsPanel==="term";
+  const termMini=minPanel.term&&!termFullscreen;
 
   const pad=Math.round(Math.min(W,H)*.014);
   const lineFs=termFullscreen
@@ -492,8 +509,8 @@ function drawTerminal(dt){
   }else{
     // mirror of the note panel: identical width, top and bottom
     panelW=RAIL.w;
-    panelH=RAIL.h;
-    rows=Math.max(3,Math.floor((panelH-titleH-pad)/lineH));
+    panelH=termMini?titleH:RAIL.h;
+    rows=termMini?0:Math.max(3,Math.floor((panelH-titleH-pad)/lineH));
     x0=RAIL.right;
     y0=RAIL.top;
   }
@@ -529,7 +546,10 @@ function drawTerminal(dt){
   ctx.fillText(termScroll>0?`ACTIVITY (${total-start-rows>0?total-start-rows:0} newer)`:"ACTIVITY",x0+pad,y0+titleH/2);
 
   const exS=Math.round(titleH*.42);
-  const exCx=x0+panelW-pad-exS/2;
+  const miCx=x0+panelW-pad-exS/2;
+  minIcon(miCx,y0+titleH/2,exS,termMini,`${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.85`);
+  termMinBox={x:miCx-exS+slideIn,y:y0,w:exS*2,h:titleH};
+  const exCx=miCx-exS*2-pad*.4;
   expandIcon(exCx,y0+titleH/2,exS,termFullscreen,`${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.8`);
   termExpandBox={x:exCx-exS+slideIn,y:y0,w:exS*2,h:titleH};
 
@@ -560,20 +580,22 @@ let now=0,thinkingAmt=0;
    time. Laid out BEFORE the side panels each frame so the rail knows how
    much room to leave, which is what keeps a panel off the captions.
    Scrolls on the wheel and expands to fullscreen like the others. */
-let subsPresence=0,subsScroll=0,subsBounds=null,subsExpandBox=null;
+let subsPresence=0,subsScroll=0,subsBounds=null,subsExpandBox=null,subsMinBox=null;
 const SUBS_FONT="'SF Mono',Menlo,Consolas,monospace";
 
 function subsLayout(){
   const items=AV.transcript||[];
   if(!items.length)return null;
   const full=fsPanel==="subs";
+  const mini=minPanel.subs&&!full;
   const m=Math.min(W,H);
   const fs=Math.max(13,Math.round(m*(full?.024:.021)));
   const lineH=Math.round(fs*1.45);
   const pad=Math.round(m*.016);
   const boxW=full?W-pad*2:Math.min(W*.62,1180);
-  const titleH=full?Math.round(fs*2.2):0;
-  const maxLines=full?Math.max(3,Math.floor((H-pad*2-titleH-pad)/lineH)):5;
+  // minimised keeps a labelled bar so the control that hid it is still there
+  const titleH=(full||mini)?Math.round(fs*2.2):0;
+  const maxLines=mini?0:(full?Math.max(3,Math.floor((H-pad*2-titleH-pad)/lineH)):5);
 
   ctx.save();
   ctx.font=`${fs}px ${SUBS_FONT}`;
@@ -596,10 +618,10 @@ function subsLayout(){
   subsScroll=Math.max(0,Math.min(subsScroll,maxScroll));
   const startIdx=Math.max(0,all.length-maxLines-subsScroll);
   const lines=all.slice(startIdx,startIdx+maxLines);
-  const boxH=titleH+lines.length*lineH+pad*1.4;
+  const boxH=mini?titleH:(titleH+lines.length*lineH+pad*1.4);
   const x0=full?pad:Math.round(cx-boxW/2);
   const y0=full?pad:Math.round(H-m*.085-boxH);
-  return {lines,total:all.length,maxScroll,fs,lineH,pad,boxW,boxH,x0,y0,titleH,full};
+  return {lines,total:all.length,maxScroll,fs,lineH,pad,boxW,boxH,x0,y0,titleH,full,mini};
 }
 
 function drawSubtitles(dt){
@@ -609,7 +631,7 @@ function drawSubtitles(dt){
   if(subsPresence<.01||!L){subsBounds=null;subsExpandBox=null;return;}
   if(fsPanel&&fsPanel!=="subs"){subsBounds=null;subsExpandBox=null;return;}
 
-  const {lines,fs,lineH,pad,boxW,boxH,x0,y0,titleH,full}=L;
+  const {lines,fs,lineH,pad,boxW,boxH,x0,y0,titleH,full,mini}=L;
   ctx.save();
   ctx.globalAlpha=subsPresence;
   ctx.translate(0,(1-subsPresence)*(lineH*.6));
@@ -632,7 +654,7 @@ function drawSubtitles(dt){
     ctx.textAlign="left";ctx.textBaseline="middle";
     ctx.font=`${Math.round(fs*.85)}px ${UI_FONT}`;
     ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.9)`;
-    ctx.fillText("TRANSCRIPT",x0+pad,y0+titleH/2);
+    ctx.fillText(mini?`TRANSCRIPT (${L.total})`:"TRANSCRIPT",x0+pad,y0+titleH/2);
     ty=y0+titleH+pad*.6;
   }
 
@@ -640,10 +662,13 @@ function drawSubtitles(dt){
   // the word FULLSCREEN anchored at the box top, which drew half of itself
   // above the frame and read as floating loose on the screen.
   const exS=Math.round(fs*.95);
-  const exCx=x0+boxW-pad-exS/2;
-  const exCy=titleH?y0+titleH/2:y0+pad*.7+exS/2;
-  expandIcon(exCx,exCy,exS,full,`${CYAN[0]},${CYAN[1]},${CYAN[2]},.7`);
-  subsExpandBox={x:exCx-exS,y:exCy-exS,w:exS*2,h:exS*2};
+  const cY=titleH?y0+titleH/2:y0+pad*.7+exS/2;
+  const miCx=x0+boxW-pad-exS/2;
+  minIcon(miCx,cY,exS,mini,`${CYAN[0]},${CYAN[1]},${CYAN[2]},.75`);
+  subsMinBox={x:miCx-exS,y:cY-exS,w:exS*2,h:exS*2};
+  const exCx=miCx-exS*2-pad*.4;
+  expandIcon(exCx,cY,exS,full,`${CYAN[0]},${CYAN[1]},${CYAN[2]},.7`);
+  subsExpandBox={x:exCx-exS,y:cY-exS,w:exS*2,h:exS*2};
 
   ctx.font=`${fs}px ${SUBS_FONT}`;
   ctx.textAlign="left";ctx.textBaseline="alphabetic";
@@ -708,17 +733,24 @@ function toggleFs(which){ fsPanel = fsPanel===which ? null : which; }
 addEventListener("mousemove",e=>{
   const hit=inBox(noteCloseBox,e.clientX,e.clientY)
           ||inBox(noteExpandBox,e.clientX,e.clientY)
+          ||inBox(termMinBox,e.clientX,e.clientY)
           ||inBox(termExpandBox,e.clientX,e.clientY)
+          ||inBox(subsMinBox,e.clientX,e.clientY)
           ||inBox(subsExpandBox,e.clientX,e.clientY);
   cv.style.cursor=hit?"pointer":"default";
 });
 addEventListener("click",e=>{
   // close before expand: the two controls sit next to each other and a
   // dismiss must never be swallowed by the panel going fullscreen instead.
-  if(inBox(noteCloseBox,e.clientX,e.clientY)){dismissedText=lastNoteText;fsPanel=null;return;}
-  if(inBox(noteExpandBox,e.clientX,e.clientY)){toggleFs("note");return;}
-  if(inBox(termExpandBox,e.clientX,e.clientY)){toggleFs("term");return;}
-  if(inBox(subsExpandBox,e.clientX,e.clientY)){toggleFs("subs");return;}
+  // minimise before expand: the controls sit next to each other and hiding a
+  // panel must never be swallowed by it going fullscreen instead.
+  if(inBox(noteCloseBox,e.clientX,e.clientY)){minPanel.note=!minPanel.note;if(fsPanel==="note")fsPanel=null;return;}
+  if(inBox(termMinBox,e.clientX,e.clientY)){minPanel.term=!minPanel.term;if(fsPanel==="term")fsPanel=null;return;}
+  if(inBox(subsMinBox,e.clientX,e.clientY)){minPanel.subs=!minPanel.subs;if(fsPanel==="subs")fsPanel=null;return;}
+  // expanding a minimised panel restores it, rather than expanding nothing
+  if(inBox(noteExpandBox,e.clientX,e.clientY)){minPanel.note=false;toggleFs("note");return;}
+  if(inBox(termExpandBox,e.clientX,e.clientY)){minPanel.term=false;toggleFs("term");return;}
+  if(inBox(subsExpandBox,e.clientX,e.clientY)){minPanel.subs=false;toggleFs("subs");return;}
 });
 addEventListener("wheel",e=>{
   // whichever panel is under the pointer takes the scroll. The note body is
