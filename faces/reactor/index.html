@@ -686,6 +686,17 @@ function drawChartTopology(chart,x0,y0,w,h,pad,bodyPx){
   const uiFs=Math.round(fs*1.05);
   const gap=pad*.8;
   const colW=(w-gap*(nets.length-1))/nets.length;
+  // headH is computed ONCE, from whether ANY column has a region note, so
+  // every column's header is the same height — a per-column height would
+  // misalign the divider line and the subnet rows underneath it. Previous
+  // version budgeted a fixed fs*3.6 that didn't account for the top
+  // padding at all, so a header with all three lines (name, CIDR, note)
+  // ran past its own bottom edge and collided with the divider.
+  const topPad=Math.round(pad*.4);
+  const lineH1=Math.round(uiFs*1.35);
+  const lineH2=Math.round(fs*1.35);
+  const anyNote=nets.some(n=>n.note);
+  const headH=topPad*2+lineH1+lineH2*(anyNote?2:1);
   nets.forEach((net,i)=>{
     const bx=x0+i*(colW+gap);
     ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.08)`;
@@ -694,7 +705,6 @@ function drawChartTopology(chart,x0,y0,w,h,pad,bodyPx){
     ctx.lineWidth=1.5;
     ctx.strokeRect(bx,y0,colW,h);
 
-    const headH=Math.round(fs*3.6);
     ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.18)`;
     ctx.fillRect(bx,y0,colW,headH);
     ctx.beginPath();ctx.moveTo(bx,y0+headH);ctx.lineTo(bx+colW,y0+headH);ctx.stroke();
@@ -704,13 +714,13 @@ function drawChartTopology(chart,x0,y0,w,h,pad,bodyPx){
     ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.95)`;
     let nm=net.name;
     while(nm.length>1&&ctx.measureText(nm).width>colW-pad)nm=nm.slice(0,-1);
-    ctx.fillText(nm,bx+pad*.5,y0+pad*.35);
+    ctx.fillText(nm,bx+pad*.5,y0+topPad);
     ctx.font=`${fs}px 'SF Mono',Menlo,Consolas,monospace`;
     ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.9)`;
-    ctx.fillText(net.cidr||"",bx+pad*.5,y0+pad*.35+uiFs*1.25);
+    ctx.fillText(net.cidr||"",bx+pad*.5,y0+topPad+lineH1);
     if(net.note){
       ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.65)`;
-      ctx.fillText(net.note,bx+pad*.5,y0+pad*.35+uiFs*1.25+fs*1.2);
+      ctx.fillText(net.note,bx+pad*.5,y0+topPad+lineH1+lineH2);
     }
 
     const subs=net.subnets||[];
