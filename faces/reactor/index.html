@@ -295,6 +295,31 @@ function drawUsage(){
 /* A drawn expand/collapse control rather than the word FULLSCREEN. The word
    ate a third of a 480px title bar and collided with any real title; corner
    brackets read instantly, cost ~14px, and cannot be missing from a font. */
+/* One chamfered panel shape for the whole HUD.
+
+   This existed as three copy-pasted blocks with two different hardcoded
+   corner sizes, which is exactly how the fill came to escape the border:
+   a clip() was added to the note panel and the other two copies never got
+   it. The title bar of every panel is painted with a plain fillRect, so
+   without a clip its square corners paint straight over the cuts, and a
+   minimised panel IS its title bar, which is where it showed worst.
+
+   Builds the path and leaves it current, so the caller can fill, stroke
+   and clip() the same geometry. */
+function panelCut(w,h){
+  // proportional so panels match at any resolution, and never more than a
+  // third of the shorter side: a minimised bar is only ~44px tall, and two
+  // cuts that meet in the middle turn the frame into a bow tie.
+  return Math.max(6,Math.min(Math.round(Math.min(W,H)*.013),Math.floor(Math.min(w,h)/3)));
+}
+function panelPath(x,y,w,h,cut){
+  ctx.beginPath();
+  ctx.moveTo(x+cut,y);ctx.lineTo(x+w-cut,y);
+  ctx.lineTo(x+w,y+cut);ctx.lineTo(x+w,y+h-cut);
+  ctx.lineTo(x+w-cut,y+h);ctx.lineTo(x+cut,y+h);
+  ctx.lineTo(x,y+h-cut);ctx.lineTo(x,y+cut);ctx.closePath();
+}
+
 function minIcon(x,y,s,mini,alpha){
   // a bar, low in the box: the universal minimise. When already minimised it
   // gains a roof, so the same control reads as "restore" without a second icon.
@@ -471,16 +496,11 @@ function drawNotePanel(dt){
   ctx.globalAlpha=notePresence;
   ctx.translate(slideIn,0);
 
-  const cut=12;
-  ctx.beginPath();
-  ctx.moveTo(x0+cut,y0);ctx.lineTo(x0+panelW-cut,y0);
-  ctx.lineTo(x0+panelW,y0+cut);ctx.lineTo(x0+panelW,y0+panelH-cut);
-  ctx.lineTo(x0+panelW-cut,y0+panelH);ctx.lineTo(x0+cut,y0+panelH);
-  ctx.lineTo(x0,y0+panelH-cut);ctx.lineTo(x0,y0+cut);ctx.closePath();
+  panelPath(x0,y0,panelW,panelH,panelCut(panelW,panelH));
   ctx.fillStyle="rgba(4,10,16,.86)";ctx.fill();
   ctx.strokeStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.75)`;
   ctx.lineWidth=1.5;ctx.stroke();
-  ctx.save();ctx.clip();   // belt and braces: nothing escapes the frame
+  ctx.save();ctx.clip();   // nothing this panel draws escapes the frame
 
   ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.16)`;
   ctx.fillRect(x0,y0,panelW,titleH);
@@ -590,15 +610,11 @@ function drawTerminal(dt){
   ctx.globalAlpha=termPresence;
   ctx.translate(slideIn,0);
 
-  const cut=12;
-  ctx.beginPath();
-  ctx.moveTo(x0+cut,y0);ctx.lineTo(x0+panelW-cut,y0);
-  ctx.lineTo(x0+panelW,y0+cut);ctx.lineTo(x0+panelW,y0+panelH-cut);
-  ctx.lineTo(x0+panelW-cut,y0+panelH);ctx.lineTo(x0+cut,y0+panelH);
-  ctx.lineTo(x0,y0+panelH-cut);ctx.lineTo(x0,y0+cut);ctx.closePath();
+  panelPath(x0,y0,panelW,panelH,panelCut(panelW,panelH));
   ctx.fillStyle="rgba(3,8,6,.92)";ctx.fill();
   ctx.strokeStyle=`rgba(${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.5)`;
   ctx.lineWidth=1.5;ctx.stroke();
+  ctx.save();ctx.clip();   // nothing this panel draws escapes the frame
 
   ctx.fillStyle=`rgba(${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.14)`;
   ctx.fillRect(x0,y0,panelW,titleH);
@@ -631,6 +647,7 @@ function drawTerminal(dt){
     ctx.fillText(line,x0+pad,ly+lineFs*.75);
     ly+=lineH;
   }
+  ctx.restore();                       // end clip
   ctx.textBaseline="alphabetic";ctx.textAlign="left";
   ctx.restore();
   termBounds={x:x0+slideIn,y:y0,w:panelW,h:panelH};
@@ -701,15 +718,11 @@ function drawSubtitles(dt){
   ctx.translate(0,(1-subsPresence)*(lineH*.6));
 
   ctx.fillStyle="rgba(2,10,18,.80)";
-  ctx.beginPath();
-  const cut=Math.round(fs*.7);
-  ctx.moveTo(x0+cut,y0);ctx.lineTo(x0+boxW-cut,y0);
-  ctx.lineTo(x0+boxW,y0+cut);ctx.lineTo(x0+boxW,y0+boxH-cut);
-  ctx.lineTo(x0+boxW-cut,y0+boxH);ctx.lineTo(x0+cut,y0+boxH);
-  ctx.lineTo(x0,y0+boxH-cut);ctx.lineTo(x0,y0+cut);ctx.closePath();
+  panelPath(x0,y0,boxW,boxH,panelCut(boxW,boxH));
   ctx.fill();
   ctx.strokeStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.30)`;
   ctx.lineWidth=1;ctx.stroke();
+  ctx.save();ctx.clip();   // nothing this panel draws escapes the frame
 
   let ty=y0+pad;
   if(titleH){
@@ -742,6 +755,7 @@ function drawSubtitles(dt){
       : `rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.95)`;
     ctx.fillText(d.text,x0+pad,ty+lineH*(i+1)-Math.round(fs*.35));
   });
+  ctx.restore();                       // end clip
   ctx.restore();
   ctx.globalAlpha=1;ctx.textAlign="left";
   subsBounds={x:x0,y:y0,w:boxW,h:boxH};
