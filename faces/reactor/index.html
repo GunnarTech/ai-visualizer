@@ -292,6 +292,24 @@ function drawUsage(){
    canvas pixels can't be selected or copied, and a pasted PowerShell command
    is exactly the case where that matters. Canvas still draws the frame and
    title bar; this div only owns the body, sized to it every frame. */
+/* A drawn expand/collapse control rather than the word FULLSCREEN. The word
+   ate a third of a 480px title bar and collided with any real title; corner
+   brackets read instantly, cost ~14px, and cannot be missing from a font. */
+function expandIcon(x,y,s,full,alpha){
+  const h=s/2, a=s*.36, inset=full?a*.9:0;
+  ctx.save();
+  ctx.strokeStyle=`rgba(${alpha})`;
+  ctx.lineWidth=Math.max(1.3,s*.12);
+  ctx.lineCap="round";
+  for(const [sx,sy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    const px=x+sx*(h-inset), py=y+sy*(h-inset);
+    ctx.beginPath();
+    ctx.moveTo(px-sx*a,py);ctx.lineTo(px,py);ctx.lineTo(px,py-sy*a);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /* ---------------- shared HUD rail ----------------
    Both side panels occupy the SAME rectangle, mirrored: same width, same
    top, same bottom. That is what makes the HUD read as one instrument
@@ -383,33 +401,44 @@ function drawNotePanel(dt){
   ctx.fillStyle="rgba(4,10,16,.86)";ctx.fill();
   ctx.strokeStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.75)`;
   ctx.lineWidth=1.5;ctx.stroke();
+  ctx.save();ctx.clip();   // belt and braces: nothing escapes the frame
 
   ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.16)`;
   ctx.fillRect(x0,y0,panelW,titleH);
   ctx.strokeStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.6)`;
   ctx.beginPath();ctx.moveTo(x0,y0+titleH);ctx.lineTo(x0+panelW,y0+titleH);ctx.stroke();
 
-  ctx.textAlign="left";ctx.textBaseline="middle";
+  // Controls are measured BEFORE the title is drawn, so the title can be cut
+  // to the room actually left. A long note title used to run straight over
+  // the close and expand controls and out past the panel edge.
+  ctx.textBaseline="middle";
+  const closeW=titleH*.9;
+  const exS=Math.round(titleH*.42);
+  const exW=exS+pad*.6;
+
+  let title=((has?AV.note.title:lastNoteTitle)||"NOTE").toUpperCase();
+  const titleRoom=panelW-pad*2-closeW-exW-pad*.5;
   ctx.font=`${titleFs}px ${UI_FONT}`;
+  if(ctx.measureText(title).width>titleRoom){
+    while(title.length>1&&ctx.measureText(title+"…").width>titleRoom)title=title.slice(0,-1);
+    title+="…";
+  }
+  ctx.textAlign="left";
   ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.95)`;
-  ctx.fillText(((has?AV.note.title:lastNoteTitle)||"NOTE").toUpperCase(),x0+pad,y0+titleH/2);
+  ctx.fillText(title,x0+pad,y0+titleH/2);
   if(has)lastNoteTitle=AV.note.title;
 
-  const closeW=titleH*.9;
   ctx.textAlign="center";
   ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.9)`;
   ctx.fillText("×",x0+panelW-closeW/2,y0+titleH/2);
   noteCloseBox={x:x0+panelW-closeW+slideIn,y:y0,w:closeW,h:titleH};
 
-  const exLabel=full?"COLLAPSE":"FULLSCREEN";
-  ctx.font=`${Math.round(titleFs*.62)}px ${UI_FONT}`;
-  ctx.textAlign="right";
-  ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.7)`;
-  const exW=ctx.measureText(exLabel).width;
-  ctx.fillText(exLabel,x0+panelW-closeW-pad*.5,y0+titleH/2);
-  noteExpandBox={x:x0+panelW-closeW-pad*.5-exW-8+slideIn,y:y0,w:exW+16,h:titleH};
+  const exCx=x0+panelW-closeW-pad*.5-exS/2;
+  expandIcon(exCx,y0+titleH/2,exS,full,`${AMBER[0]},${AMBER[1]},${AMBER[2]},.8`);
+  noteExpandBox={x:exCx-exS+slideIn,y:y0,w:exS*2,h:titleH};
   noteBounds={x:x0+slideIn,y:y0,w:panelW,h:panelH};
 
+  ctx.restore();                       // end clip
   ctx.textBaseline="alphabetic";ctx.textAlign="left";
   ctx.restore();
 
@@ -499,13 +528,10 @@ function drawTerminal(dt){
   ctx.fillStyle=`rgba(${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.9)`;
   ctx.fillText(termScroll>0?`ACTIVITY (${total-start-rows>0?total-start-rows:0} newer)`:"ACTIVITY",x0+pad,y0+titleH/2);
 
-  const label=termFullscreen?"COLLAPSE":"FULLSCREEN";
-  ctx.font=`${Math.round(lineFs*.85)}px ${UI_FONT}`;
-  const tw=ctx.measureText(label).width;
-  ctx.textAlign="right";
-  ctx.fillText(label,x0+panelW-pad,y0+titleH/2);
-  ctx.textAlign="left";
-  termExpandBox={x:x0+panelW-pad-tw-8+slideIn,y:y0,w:tw+16,h:titleH};
+  const exS=Math.round(titleH*.42);
+  const exCx=x0+panelW-pad-exS/2;
+  expandIcon(exCx,y0+titleH/2,exS,termFullscreen,`${TERM_GREEN[0]},${TERM_GREEN[1]},${TERM_GREEN[2]},.8`);
+  termExpandBox={x:exCx-exS+slideIn,y:y0,w:exS*2,h:titleH};
 
   ctx.font=`${lineFs}px 'SF Mono',Menlo,Consolas,monospace`;
   const maxChars=Math.floor((panelW-pad*2)/(lineFs*.62));
@@ -610,15 +636,14 @@ function drawSubtitles(dt){
     ty=y0+titleH+pad*.6;
   }
 
-  // the expand control sits top-right of the bar either way
-  const exLabel=full?"COLLAPSE":"FULLSCREEN";
-  ctx.font=`${Math.round(fs*.72)}px ${UI_FONT}`;
-  ctx.textAlign="right";ctx.textBaseline="middle";
-  ctx.fillStyle=`rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},.65)`;
-  const exW=ctx.measureText(exLabel).width;
-  const exY=titleH?y0+titleH/2:y0+pad*.9;
-  ctx.fillText(exLabel,x0+boxW-pad,exY);
-  subsExpandBox={x:x0+boxW-pad-exW-8,y:exY-fs,w:exW+16,h:fs*2};
+  // the expand control sits INSIDE the top-right corner. It previously used
+  // the word FULLSCREEN anchored at the box top, which drew half of itself
+  // above the frame and read as floating loose on the screen.
+  const exS=Math.round(fs*.95);
+  const exCx=x0+boxW-pad-exS/2;
+  const exCy=titleH?y0+titleH/2:y0+pad*.7+exS/2;
+  expandIcon(exCx,exCy,exS,full,`${CYAN[0]},${CYAN[1]},${CYAN[2]},.7`);
+  subsExpandBox={x:exCx-exS,y:exCy-exS,w:exS*2,h:exS*2};
 
   ctx.font=`${fs}px ${SUBS_FONT}`;
   ctx.textAlign="left";ctx.textBaseline="alphabetic";
