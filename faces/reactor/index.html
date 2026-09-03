@@ -976,6 +976,11 @@ function frame(dt){
   AV.tick(dt);
   now+=dt;
   const state=AV.state, alert=AV.alert;
+  // Listening owns the whole screen — that's the point of it (see the
+  // file header). A fullscreen note/terminal/subs panel left open from
+  // earlier draws on top of that every frame and silently buries it, so
+  // holding the PTT key never actually reclaims the screen back.
+  if(state==="listening"&&fsPanel)fsPanel=null;
   const tgt=state==="thinking"?1:0;
   thinkingAmt+=(tgt-thinkingAmt)*Math.min(1,dt/400);
 
