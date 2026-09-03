@@ -350,8 +350,57 @@ function computeRail(){
 
 let notePresence=0;
 const noteTextEl=document.getElementById("noteText");
+// A note can carry a chart (a list of {label,value} bars) instead of, or
+// above, its text. Same bus file, same panel — a chart is drawn straight
+// onto the canvas (it's not selectable text, so it doesn't need the DOM
+// element the way the body copy does), and it eats the top of the body
+// area; any text that came with it fills whatever room is left below.
+function noteHasChart(n){
+  return !!(n&&n.chart&&Array.isArray(n.chart.data)&&n.chart.data.length);
+}
+function drawChartBars(chart,x0,y0,panelW,rowH,pad,bodyPx){
+  const data=chart.data;
+  const maxVal=Math.max(1e-9,...data.map(d=>Math.abs(Number(d.value)||0)));
+  const areaX=x0+pad,areaW=panelW-pad*2;
+  ctx.font=`${Math.round(bodyPx*.92)}px 'SF Mono',Menlo,Consolas,monospace`;
+  // the value number gets its own fixed column on the right, same as the
+  // label on the left — otherwise the bar for the largest value fills its
+  // whole track and shoves its own number off the edge of the panel.
+  const valTexts=data.map(d=>chart.unit?`${d.value}${chart.unit}`:String(d.value));
+  const valueW=Math.max(...valTexts.map(t=>ctx.measureText(t).width))+pad*.6;
+  // sized to the actual label text, not a flat percentage — a flat column
+  // left "Jan" stranded against the bar with a dead gap of empty space
+  // where a longer label would have needed the room and this one didn't.
+  const lblTexts=data.map(d=>String(d.label??""));
+  const labelW=Math.min(areaW*.5,Math.max(...lblTexts.map(t=>ctx.measureText(t).width))+pad*.6);
+  const barX=areaX+labelW,barW=Math.max(10,areaW-labelW-valueW);
+  ctx.textBaseline="middle";
+  let by=y0;
+  data.forEach((d,i)=>{
+    const v=Number(d.value)||0;
+    const frac=Math.max(0,Math.min(1,Math.abs(v)/maxVal));
+    ctx.textAlign="right";
+    ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.9)`;
+    let lbl=String(d.label??"");
+    while(lbl.length>1&&ctx.measureText(lbl).width>labelW-pad*.5)lbl=lbl.slice(0,-1);
+    ctx.fillText(lbl,barX-pad*.5,by+rowH/2);
+    const trackH=Math.max(4,Math.round(rowH*.38));
+    const trackY=by+rowH/2-trackH/2;
+    ctx.fillStyle=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.15)`;
+    ctx.fillRect(barX,trackY,barW,trackH);
+    ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.85)`;
+    const fillW=Math.max(2,barW*frac);
+    ctx.fillRect(barX,trackY,fillW,trackH);
+    ctx.textAlign="left";
+    ctx.fillStyle=`rgba(${AMBER[0]},${AMBER[1]},${AMBER[2]},.95)`;
+    ctx.fillText(valTexts[i],barX+barW+pad*.4,by+rowH/2);
+    by+=rowH;
+  });
+  ctx.textAlign="left";ctx.textBaseline="alphabetic";
+}
 function drawNotePanel(dt){
-  const has=!!(AV.note&&AV.note.text)&&AV.note.text!==dismissedText;
+  const noteHasContent=!!(AV.note&&(AV.note.text||noteHasChart(AV.note)));
+  const has=noteHasContent&&AV.note.text!==dismissedText;
   notePresence+=((has?1:0)-notePresence)*Math.min(1,dt/300);
   if(notePresence<.01){
     noteCloseBox=null;
@@ -378,8 +427,11 @@ function drawNotePanel(dt){
   if(has)lastNoteStyle=style;
   const fontFamily=style==="doc"?"'Calibri','Segoe UI',sans-serif":"'SF Mono',Menlo,Consolas,monospace";
   const bodyPx=style==="doc"?Math.round(bodyFs*1.1):bodyFs;
-  const text=has?AV.note.text:(lastNoteText||"");
-  if(has)lastNoteText=AV.note.text;
+  const text=has?(AV.note.text||""):(lastNoteText||"");
+  if(has)lastNoteText=text;
+  const chart=has?(noteHasChart(AV.note)?AV.note.chart:null):lastNoteChart;
+  if(has)lastNoteChart=chart;
+  const hasText=!!text;
   const titleH=Math.round(titleFs*2);
 
   // lay the real text out first so its natural (possibly scrollable) height
@@ -404,6 +456,16 @@ function drawNotePanel(dt){
   const x0=full?pad:RAIL.left;
   const y0=full?pad:RAIL.top;
   const slideIn=full?0:(1-notePresence)*-(panelW*.15);
+
+  // chart eats the top of the body; text (if any) gets whatever's left.
+  // Row height shrinks to fit before rows ever get clipped off.
+  const chartRows=(chart&&!mini)?chart.data.length:0;
+  const idealRowH=Math.round(bodyPx*2.1);
+  const maxChartH=bodyH*(hasText?.55:.92);
+  const chartRowH=chartRows?Math.max(Math.round(bodyPx*1.3),Math.min(idealRowH,maxChartH/chartRows)):0;
+  const chartH=chartRows?chartRowH*chartRows:0;
+  const chartGap=(chartH&&hasText)?Math.round(pad*.9):0;
+  const textH=Math.max(0,bodyH-chartH-chartGap);
 
   ctx.save();
   ctx.globalAlpha=notePresence;
@@ -454,19 +516,21 @@ function drawNotePanel(dt){
   noteExpandBox={x:exCx-exS+slideIn,y:y0,w:exS*2,h:titleH};
   noteBounds={x:x0+slideIn,y:y0,w:panelW,h:panelH};
 
+  if(chartRows)drawChartBars(chart,x0,y0+titleH+pad*.65,panelW,chartRowH,pad,bodyPx);
+
   ctx.restore();                       // end clip
   ctx.textBaseline="alphabetic";ctx.textAlign="left";
   ctx.restore();
 
   noteTextEl.style.left=`${x0+pad+slideIn}px`;
-  noteTextEl.style.top=`${y0+titleH+pad*.65}px`;
-  noteTextEl.style.height=`${bodyH}px`;
-  noteTextEl.style.maxHeight=`${bodyH}px`;
+  noteTextEl.style.top=`${y0+titleH+pad*.65+chartH+chartGap}px`;
+  noteTextEl.style.height=`${textH}px`;
+  noteTextEl.style.maxHeight=`${textH}px`;
   noteTextEl.style.color=`rgba(${STEEL[0]},${STEEL[1]},${STEEL[2]},.95)`;
-  noteTextEl.style.opacity=mini?0:notePresence;
-  noteTextEl.style.pointerEvents=(has&&!mini)?"auto":"none";
+  noteTextEl.style.opacity=(mini||!hasText)?0:notePresence;
+  noteTextEl.style.pointerEvents=(has&&!mini&&hasText)?"auto":"none";
 }
-let lastNoteText="",lastNoteTitle="",lastNoteStyle="term",dismissedText=null,
+let lastNoteText="",lastNoteTitle="",lastNoteStyle="term",lastNoteChart=null,dismissedText=null,
     noteCloseBox=null,noteExpandBox=null,noteBounds=null;
 
 function drawAlertFrame(t){

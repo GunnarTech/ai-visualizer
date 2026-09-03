@@ -173,7 +173,7 @@ const AV = (() => {
     // Empty unless the voice line was told to publish usage. A face that
     // wants to draw it reads AV.rateLimits; every other face ignores it.
     A.rateLimits = raw.rate_limits || {};
-    A.note = (raw.note && raw.note.text) ? raw.note : null;
+    A.note = (raw.note && (raw.note.text || (raw.note.chart && Array.isArray(raw.note.chart.data) && raw.note.chart.data.length))) ? raw.note : null;
     A.activity = Array.isArray(raw.activity) ? raw.activity : [];
     A.transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
     A.level = raw.level || 0;
